@@ -1,17 +1,12 @@
 import CoreGraphics
 import Foundation
 
-/// Identifies a display by properties that survive a reboot or a replug.
+/// Identifies a display by properties that outlive a restart or a replug.
 /// `CGDirectDisplayID` itself does not, so it is never persisted.
 struct DisplayFingerprint: Codable, Equatable {
     var vendor: UInt32
     var model: UInt32
     var serial: UInt32
-
-    /// The touchscreen on this machine, read from CGDisplay at design time.
-    /// Note the main display's vendor decodes to "VSC" (ViewSonic) while the touchscreen
-    /// decodes to "VSP" — matching on brand alone would pick the wrong screen.
-    static let knownTouchscreen = DisplayFingerprint(vendor: 23152, model: 342, serial: 16_777_216)
 }
 
 enum DisplayRegistry {
@@ -34,17 +29,28 @@ enum DisplayRegistry {
         )
     }
 
-    /// Finds the touchscreen. Exact fingerprint first; if the panel was swapped, fall
-    /// back to the sole non-main display so the app still does something sensible.
-    static func touchDisplay(matching wanted: DisplayFingerprint = .knownTouchscreen) -> CGDirectDisplayID? {
+    /// Finds the touchscreen.
+    ///
+    /// There is no public API linking a USB HID device to a CGDirectDisplayID, and a
+    /// display serial read off one machine is worthless on any other — so nothing about
+    /// a specific panel is baked in here. The screen is inferred only when the inference
+    /// is unambiguous, taken from the environment when the user states it, and otherwise
+    /// reported as unknown rather than guessed at.
+    static func touchDisplay() -> CGDirectDisplayID? {
         let displays = activeDisplays()
 
-        if let exact = displays.first(where: { fingerprint($0) == wanted }) {
-            return exact
+        if let raw = ProcessInfo.processInfo.environment["TOUCHBRIDGE_DISPLAY_ID"],
+           let requested = UInt32(raw),
+           displays.contains(requested) {
+            return requested
         }
 
+        // Exactly one external display is the only case that can be inferred safely, and
+        // it must never resolve to the main display: that maps every touch onto the wrong
+        // monitor and makes the cursor "return home" to the screen it just left.
         let externals = displays.filter { CGDisplayIsMain($0) == 0 }
-        return externals.count == 1 ? externals[0] : nil
+        guard externals.count == 1, externals[0] != mainDisplay() else { return nil }
+        return externals[0]
     }
 
     static func mainDisplay() -> CGDirectDisplayID? {

@@ -16,11 +16,12 @@ final class FocusWatcher {
     private var observedApp: AXUIElement?
     private var observedPID: pid_t?
     private var onChange: ((Focus) -> Void)?
+    private var activationToken: NSObjectProtocol?
 
     func start(onChange: @escaping (Focus) -> Void) {
         self.onChange = onChange
 
-        NSWorkspace.shared.notificationCenter.addObserver(
+        activationToken = NSWorkspace.shared.notificationCenter.addObserver(
             forName: NSWorkspace.didActivateApplicationNotification,
             object: nil, queue: .main
         ) { [weak self] note in
@@ -34,9 +35,16 @@ final class FocusWatcher {
     }
 
     private func observe(pid: pid_t) {
+        // Cmd-Tab back and forth re-activates the same app; rebuilding the observer each
+        // time re-triggers AXManualAccessibility and a full round-trip for nothing.
+        guard pid != observedPID else { return }
         teardown()
 
         let app = AXUIElementCreateApplication(pid)
+        // Every AX read below is a blocking IPC call on the main thread, where the touch
+        // heartbeat also lives. The default timeout is ~6s: long enough for a beachballing
+        // app to stall the backstop that releases a held mouse button.
+        AXUIElementSetMessagingTimeout(app, 0.25)
 
         // Chromium and Electron keep their web accessibility tree switched off until
         // something asks for it. Without this, focus in a web text field never fires.
@@ -49,7 +57,12 @@ final class FocusWatcher {
             me.reportCurrentFocus()
         }
 
-        guard AXObserverCreate(pid, callback, &newObserver) == .success, let created = newObserver else { return }
+        guard AXObserverCreate(pid, callback, &newObserver) == .success, let created = newObserver else {
+            // Failing silently would strand a visible keyboard over an app that cannot
+            // report focus at all.
+            onChange?(Focus(isTextInput: false, isSecureField: false))
+            return
+        }
 
         let context = Unmanaged.passUnretained(self).toOpaque()
         AXObserverAddNotification(created, app, kAXFocusedUIElementChangedNotification as CFString, context)
@@ -63,7 +76,10 @@ final class FocusWatcher {
     }
 
     private func reportCurrentFocus() {
-        guard let app = observedApp else { return }
+        guard let app = observedApp else {
+            onChange?(Focus(isTextInput: false, isSecureField: false))
+            return
+        }
 
         var focused: CFTypeRef?
         guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
@@ -97,6 +113,15 @@ final class FocusWatcher {
         var value: CFTypeRef?
         guard AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success else { return nil }
         return value as? String
+    }
+
+    func stop() {
+        if let activationToken {
+            NSWorkspace.shared.notificationCenter.removeObserver(activationToken)
+        }
+        activationToken = nil
+        teardown()
+        onChange = nil
     }
 
     private func teardown() {

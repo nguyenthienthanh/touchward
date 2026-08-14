@@ -21,8 +21,26 @@ public struct GestureConfig: Sendable {
 /// contact's velocity, and matches the muscle memory macOS already teaches. Scroll deltas
 /// are raw finger displacement — the synthesizer owns polarity so this type stays free of
 /// platform conventions.
+///
+/// Two invariants the tests pin down, because breaking either is user-visible damage:
+/// every `dragBegan` is matched by exactly one `dragEnded`, and `sessionEnded` fires
+/// exactly once per physical touch session (it arms a cursor warp, so a spurious one
+/// yanks the pointer away mid-touch).
 public struct GestureRecognizer: Sendable {
     public var config: GestureConfig
+
+    /// Shared by `.twoDown` and `.settling` so a scroll that momentarily drops a contact
+    /// can resume, and so a tap is still classified correctly when the fingers leave one
+    /// at a time — which is what actually happens on real hardware.
+    private struct TwoFinger {
+        var startTime: TimeInterval
+        var lastCentroid: CGPoint
+        var moved: Bool
+        /// True when these fingers arrived during an existing gesture (e.g. a drag). Such
+        /// a sequence must never be reclassified as a two-finger tap.
+        var wasGesture: Bool
+        var contactCount: Int
+    }
 
     private enum State {
         case idle
@@ -30,9 +48,9 @@ public struct GestureRecognizer: Sendable {
         case dragging(id: UInt8, last: CGPoint)
         /// Right click already emitted; ignore everything until the finger lifts.
         case longPressed
-        case twoDown(startTime: TimeInterval, lastCentroid: CGPoint, moved: Bool)
-        /// Gesture is over but fingers are still down.
-        case settling
+        case twoDown(TwoFinger)
+        /// Fewer than two fingers remain, but the hand has not left the glass.
+        case settling(TwoFinger)
     }
 
     private var state: State = .idle
@@ -43,13 +61,16 @@ public struct GestureRecognizer: Sendable {
     }
 
     /// True while a gesture is in flight — i.e. a pointer button may be held down.
+    /// `TouchPipeline` gates its heartbeat on this, so a wrong answer here silently
+    /// disables the long press and the stale-drag backstop.
     public var hasActiveGesture: Bool {
         if case .idle = state { return false }
         return true
     }
 
     public mutating func handle(_ frame: MappedFrame) -> [GestureEvent] {
-        lastFrameTime = frame.time
+        // Never let an out-of-order report push the staleness deadline backwards.
+        lastFrameTime = max(lastFrameTime, frame.time)
         let count = frame.contacts.count
 
         switch state {
@@ -59,19 +80,21 @@ public struct GestureRecognizer: Sendable {
         case .oneDown(let id, let start, let startTime):
             if count == 0 {
                 state = .idle
-                let wasTap = frame.time - startTime <= config.tapMaxDuration
-                return wasTap ? [.leftClick(at: start), .sessionEnded] : [.sessionEnded]
+                return isWithinTapWindow(frame.time, since: startTime)
+                    ? [.leftClick(at: start), .sessionEnded]
+                    : [.sessionEnded]
             }
             if count >= 2 {
                 // A second finger reclassifies the gesture; the pending tap is void.
-                state = .twoDown(startTime: frame.time, lastCentroid: centroid(frame), moved: false)
+                state = .twoDown(twoFinger(frame, wasGesture: false))
                 return []
             }
             guard let point = point(of: id, in: frame) else {
-                // A different finger than the one we were tracking. Continuing would
-                // charge this tap to the wrong location.
-                state = .idle
-                return [.sessionEnded]
+                // The controller re-assigned the contact ID. The finger never left the
+                // glass, so ending the session here would warp the cursor away mid-touch;
+                // re-seed against the new ID instead.
+                reseed(frame)
+                return []
             }
 
             if distance(point, start) > config.moveThreshold {
@@ -90,14 +113,14 @@ public struct GestureRecognizer: Sendable {
                 return [.dragEnded(at: last), .sessionEnded]
             }
             if count >= 2 {
-                state = .twoDown(startTime: frame.time, lastCentroid: centroid(frame), moved: false)
+                state = .twoDown(twoFinger(frame, wasGesture: true))
                 return [.dragEnded(at: last)]
             }
             guard let point = point(of: id, in: frame) else {
-                // Tracked finger vanished and a different one is down: end the drag here
-                // rather than teleport it onto whatever the new finger is over.
-                state = .idle
-                return [.dragEnded(at: last), .sessionEnded]
+                // Close the drag where it was rather than teleport it onto the new finger,
+                // but keep the session alive — a finger is still down.
+                reseed(frame)
+                return [.dragEnded(at: last)]
             }
 
             guard point != last else { return [] }
@@ -109,31 +132,48 @@ public struct GestureRecognizer: Sendable {
             state = .idle
             return [.sessionEnded]
 
-        case .twoDown(let startTime, let lastCentroid, let moved):
+        case .twoDown(var two):
             if count == 0 {
                 state = .idle
-                let wasTap = !moved && frame.time - startTime <= config.tapMaxDuration
-                return wasTap ? [.rightClick(at: lastCentroid), .sessionEnded] : [.sessionEnded]
+                return finishTwoFinger(two, at: frame.time)
             }
             if count == 1 {
-                // One finger lifted mid-scroll: stop scrolling rather than lurch to a
-                // single-contact centroid, and wait for the hand to leave the glass.
-                state = .settling
+                state = .settling(two)
+                return []
+            }
+            guard count == two.contactCount else {
+                // A third finger landed (or one of three lifted). Diffing across a changed
+                // contact set would emit one large bogus scroll delta.
+                two.contactCount = count
+                two.lastCentroid = centroid(frame)
+                state = .twoDown(two)
                 return []
             }
 
             let current = centroid(frame)
-            let dx = current.x - lastCentroid.x
-            let dy = current.y - lastCentroid.y
+            let dx = current.x - two.lastCentroid.x
+            let dy = current.y - two.lastCentroid.y
             guard dx != 0 || dy != 0 else { return [] }
 
-            state = .twoDown(startTime: startTime, lastCentroid: current, moved: true)
+            two.lastCentroid = current
+            two.moved = true
+            state = .twoDown(two)
             return [.scroll(dx: dx, dy: dy, at: current)]
 
-        case .settling:
-            guard count == 0 else { return [] }
-            state = .idle
-            return [.sessionEnded]
+        case .settling(var two):
+            if count == 0 {
+                state = .idle
+                return finishTwoFinger(two, at: frame.time)
+            }
+            if count >= 2 {
+                // The dropped contact came back — resume scrolling from a fresh centroid
+                // rather than stranding the gesture until the whole hand lifts.
+                two.contactCount = count
+                two.lastCentroid = centroid(frame)
+                state = .twoDown(two)
+                return []
+            }
+            return []
         }
     }
 
@@ -149,8 +189,13 @@ public struct GestureRecognizer: Sendable {
 
         case .dragging(_, let last):
             guard time - lastFrameTime > config.staleDragTimeout else { return [] }
-            state = .idle
-            return [.dragEnded(at: last), .sessionEnded]
+            // Release the button, but withhold sessionEnded: the finger may simply be
+            // resting, and sessionEnded would warp the cursor off the touchscreen while
+            // the user is still touching it. A real zero-contact frame, or forceRelease,
+            // ends the session.
+            state = .settling(TwoFinger(startTime: lastFrameTime, lastCentroid: last,
+                                        moved: true, wasGesture: true, contactCount: 1))
+            return [.dragEnded(at: last)]
 
         default:
             return []
@@ -172,6 +217,8 @@ public struct GestureRecognizer: Sendable {
         }
     }
 
+    // MARK: helpers
+
     private mutating func begin(_ frame: MappedFrame, count: Int) -> [GestureEvent] {
         switch count {
         case 0:
@@ -180,9 +227,36 @@ public struct GestureRecognizer: Sendable {
             let contact = frame.contacts[0]
             state = .oneDown(id: contact.id, start: contact.point, startTime: frame.time)
         default:
-            state = .twoDown(startTime: frame.time, lastCentroid: centroid(frame), moved: false)
+            state = .twoDown(twoFinger(frame, wasGesture: false))
         }
         return []
+    }
+
+    private mutating func reseed(_ frame: MappedFrame) {
+        guard let contact = frame.contacts.first else {
+            state = .idle
+            return
+        }
+        state = .oneDown(id: contact.id, start: contact.point, startTime: frame.time)
+    }
+
+    private func twoFinger(_ frame: MappedFrame, wasGesture: Bool) -> TwoFinger {
+        TwoFinger(startTime: frame.time, lastCentroid: centroid(frame),
+                  moved: false, wasGesture: wasGesture, contactCount: frame.contacts.count)
+    }
+
+    private func finishTwoFinger(_ two: TwoFinger, at time: TimeInterval) -> [GestureEvent] {
+        let wasTap = !two.moved && !two.wasGesture
+            && isWithinTapWindow(time, since: two.startTime)
+        return wasTap ? [.rightClick(at: two.lastCentroid), .sessionEnded] : [.sessionEnded]
+    }
+
+    /// A negative interval means the reports arrived out of order or the clock moved.
+    /// Treating that as "elapsed 0" would classify a long hold as an instant tap and fire
+    /// a click the user never asked for, so an unusable measurement is never a tap.
+    private func isWithinTapWindow(_ time: TimeInterval, since start: TimeInterval) -> Bool {
+        let interval = time - start
+        return interval >= 0 && interval <= config.tapMaxDuration
     }
 
     private func point(of id: UInt8, in frame: MappedFrame) -> CGPoint? {

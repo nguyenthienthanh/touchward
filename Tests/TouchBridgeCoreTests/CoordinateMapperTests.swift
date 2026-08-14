@@ -10,17 +10,17 @@ private let touchDisplay = CGRect(x: -1920, y: 0, width: 1920, height: 1080)
 final class CoordinateMapperTests: XCTestCase {
 
     func testOriginMapsToDisplayOriginNotScreenZero() {
-        let mapper = CoordinateMapper(displayBounds: touchDisplay)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay)
         XCTAssertEqual(mapper.globalPoint(x: 0, y: 0), CGPoint(x: -1920, y: 0))
     }
 
     func testFarCornerMapsToDisplayFarCorner() {
-        let mapper = CoordinateMapper(displayBounds: touchDisplay)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay)
         XCTAssertEqual(mapper.globalPoint(x: 4095, y: 4095), CGPoint(x: 0, y: 1080))
     }
 
     func testCentreOfPanelMapsToCentreOfDisplay() {
-        let mapper = CoordinateMapper(displayBounds: touchDisplay)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay)
         let p = mapper.globalPoint(x: 2047, y: 2047)
 
         XCTAssertEqual(p.x, -960, accuracy: 1.0)
@@ -30,7 +30,7 @@ final class CoordinateMapperTests: XCTestCase {
     /// The X axis is independent of the Y axis even though both share a 0…4095 range
     /// while the display is 16:9 — a swapped-axis bug would pass a square-display test.
     func testAxesAreNotSwapped() {
-        let mapper = CoordinateMapper(displayBounds: touchDisplay)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay)
         let p = mapper.globalPoint(x: 4095, y: 0)
 
         XCTAssertEqual(p.x, 0, accuracy: 0.5)
@@ -38,14 +38,14 @@ final class CoordinateMapperTests: XCTestCase {
     }
 
     func testWorksForADisplayAtPositiveOrigin() {
-        let mapper = CoordinateMapper(displayBounds: CGRect(x: 0, y: 0, width: 2560, height: 1440))
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: CGRect(x: 0, y: 0, width: 2560, height: 1440))
         XCTAssertEqual(mapper.globalPoint(x: 4095, y: 4095), CGPoint(x: 2560, y: 1440))
     }
 
     func testCalibrationTrimsTheActiveArea() {
         // Panel only reports usable data across the middle half of each axis.
         let calibration = Calibration(xMin: 0.25, xMax: 0.75, yMin: 0.25, yMax: 0.75)
-        let mapper = CoordinateMapper(displayBounds: touchDisplay, calibration: calibration)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay, calibration: calibration)
 
         // The lower calibration bound must now land on the display's left edge.
         let atLowerBound = mapper.globalPoint(x: Int(4095 * 0.25), y: Int(4095 * 0.25))
@@ -61,7 +61,7 @@ final class CoordinateMapperTests: XCTestCase {
     /// the main screen and click something there.
     func testPointsOutsideCalibrationAreClampedToTheDisplay() {
         let calibration = Calibration(xMin: 0.25, xMax: 0.75, yMin: 0.25, yMax: 0.75)
-        let mapper = CoordinateMapper(displayBounds: touchDisplay, calibration: calibration)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay, calibration: calibration)
 
         let p = mapper.globalPoint(x: 4095, y: 4095)
         XCTAssertLessThanOrEqual(p.x, 0)
@@ -69,8 +69,17 @@ final class CoordinateMapperTests: XCTestCase {
         XCTAssertLessThanOrEqual(p.y, 1080)
     }
 
+    /// Only the upper bound was probed before, so dropping the lower clamp went unnoticed —
+    /// and a negative fraction sends the touch onto the neighbouring display.
+    func testTouchBelowTheCalibratedLowerBoundIsClampedToTheDisplayEdge() {
+        let calibration = Calibration(xMin: 0.25, xMax: 0.75, yMin: 0.25, yMax: 0.75)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay, calibration: calibration)
+
+        XCTAssertEqual(mapper.globalPoint(x: 0, y: 0), CGPoint(x: -1920, y: 0))
+    }
+
     func testMapsAWholeFramePreservingContactIdentity() {
-        let mapper = CoordinateMapper(displayBounds: touchDisplay)
+        let mapper = CoordinateMapper(logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: touchDisplay)
         let frame = TouchFrame(contacts: [
             Contact(id: 3, x: 0, y: 0, isTouching: true),
             Contact(id: 9, x: 4095, y: 4095, isTouching: true),

@@ -3,153 +3,198 @@ import IOKit
 import IOKit.hid
 import TouchBridgeCore
 
-/// Owns the physical touchscreen: opens it, takes it away from macOS's default handling,
-/// asks it for multitouch reports, and hands raw report bytes upward.
+/// What the panel says about itself. Every field is read from the device's own HID
+/// elements — nothing here is a constant copied off one machine.
+struct DeviceProfile {
+    var logicalMaxX: Double
+    var logicalMaxY: Double
+    var maxContacts: Int
+    /// Report ID of the Digitizer Device Configuration feature, when the device has one.
+    var inputModeReportID: UInt8?
+    var productName: String
+
+    var logicalMax: Double { max(logicalMaxX, logicalMaxY) }
+}
+
+/// Owns the physical touchscreen: finds it by what it declares, takes it away from macOS's
+/// default handling, asks it for multitouch, and publishes decoded touch frames.
+///
+/// Matching is by HID usage, not vendor and product IDs: any panel that declares itself a
+/// Digitizer / Touch Screen is one, whereas a VID/PID pair only ever describes the single
+/// unit it was read from. Reports are consumed as decoded element values, so no byte
+/// offset, contact count or report layout is assumed anywhere in this project.
 final class HIDTouchDevice {
-    struct Identity {
-        var vendorID: Int
-        var productID: Int
 
-        static let sisTouchController = Identity(vendorID: 0x0457, productID: 0x0819)
-    }
-
-    /// Digitizer Device Configuration feature report. Windows writes InputMode to switch
-    /// the controller out of its mouse-compatibility mode; macOS never does, which is why
-    /// the panel behaves like a button-only pointing device out of the box.
-    private enum InputMode {
-        static let reportID: UInt8 = 0x07
-        static let mouse: UInt8 = 0x00
-        static let multitouch: UInt8 = 0x02
-        /// Some controllers use the Windows-precision value instead.
-        static let alternate: UInt8 = 0x03
-    }
-
-    private let identity: Identity
     private var manager: IOHIDManager?
     private var devices: [IOHIDDevice] = []
-    private var buffers: [(pointer: UnsafeMutablePointer<UInt8>, capacity: Int)] = []
-    private var onReport: ((UInt8, [UInt8], TimeInterval) -> Void)?
-    /// Called when the panel is unplugged, so the caller can release a held button rather
-    /// than leave one pressed for the rest of the login session.
+    private var openOptionsByDevice: [IOOptionBits] = []
+    private var assembler = TouchValueAssembler()
+    private var onFrame: ((TouchFrame) -> Void)?
+
+    private(set) var isSeized = false
+    private(set) var inputModeSet = false
+    private(set) var profile: DeviceProfile?
+
+    /// Called when the panel is unplugged, so the caller can release anything held.
     var onDisconnect: (() -> Void)?
 
-    /// False when the device could not be seized. Callers should then expect macOS to
-    /// keep producing its own phantom clicks.
-    private(set) var isSeized = false
-
-    init(identity: Identity = .sisTouchController) {
-        self.identity = identity
-    }
-
-    /// Returns a human-readable failure so main can print something actionable rather
-    /// than a bare IOReturn code.
-    func start(onReport: @escaping (UInt8, [UInt8], TimeInterval) -> Void) -> Result<Void, StartError> {
-        self.onReport = onReport
+    func start(onFrame: @escaping (TouchFrame) -> Void) -> Result<DeviceProfile, StartError> {
+        self.onFrame = onFrame
 
         let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
         self.manager = manager
 
+        // Declared usage, not VID/PID: this is what lets the driver work on a panel it has
+        // never seen before.
         IOHIDManagerSetDeviceMatching(manager, [
-            kIOHIDVendorIDKey: identity.vendorID,
-            kIOHIDProductIDKey: identity.productID,
+            kIOHIDDeviceUsagePageKey: Usage.Page.digitizer,
+            kIOHIDDeviceUsageKey: Usage.touchScreen,
         ] as CFDictionary)
 
         let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard opened == kIOReturnSuccess else {
-            return .failure(.managerOpenFailed(opened))
-        }
+        guard opened == kIOReturnSuccess else { return .failure(.managerOpenFailed(opened)) }
 
-        guard let devices = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>, !devices.isEmpty else {
+        guard let found = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
+              let device = found.first else {
             return .failure(.deviceNotFound)
         }
 
         IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, _ in
             guard let context else { return }
-            Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue().onDisconnect?()
+            Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue().handleRemoval()
         }, Unmanaged.passUnretained(self).toOpaque())
 
-        for device in devices {
-            attach(device)
-        }
-        return .success(())
+        // The manager needs its own run-loop scheduling: per-device scheduling below only
+        // delivers input, never the removal callback.
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+
+        guard let profile = attach(device) else { return .failure(.unreadableDescriptor) }
+        self.profile = profile
+        return .success(profile)
     }
 
-    private func attach(_ device: IOHIDDevice) {
-        // Seizing stops macOS from turning this device's reports into its own events.
-        // Without it we get a phantom click at the cursor on every touch.
-        let seized = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
-        if seized == kIOReturnSuccess {
+    private func attach(_ device: IOHIDDevice) -> DeviceProfile? {
+        var options = IOOptionBits(kIOHIDOptionsTypeSeizeDevice)
+        if IOHIDDeviceOpen(device, options) == kIOReturnSuccess {
             isSeized = true
         } else {
-            // Fall back to a shared open so we can still read; the caller is told.
-            _ = IOHIDDeviceOpen(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            // A shared open still lets us read; the caller is told that macOS will keep
+            // producing its own phantom clicks.
+            options = IOOptionBits(kIOHIDOptionsTypeNone)
+            guard IOHIDDeviceOpen(device, options) == kIOReturnSuccess else { return nil }
         }
 
-        switchToMultitouch(device)
-
-        // Never trust the reported size alone: IOKit writes `length` bytes into whatever
-        // we hand it, and a missing property would otherwise size the buffer by guess.
-        let reported = (IOHIDDeviceGetProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as? Int) ?? 0
-        let capacity = max(reported, 128)
-        let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
-        buffers.append((buffer, capacity))
         devices.append(device)
+        openOptionsByDevice.append(options)
 
-        IOHIDDeviceRegisterInputReportCallback(
-            device, buffer, capacity,
-            { context, _, _, _, reportID, report, length in
-                guard let context, length > 0 else { return }
-                let me = Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue()
-                let bytes = Array(UnsafeBufferPointer(start: report, count: length))
-                me.onReport?(UInt8(reportID), bytes, Date().timeIntervalSinceReferenceDate)
-            },
-            Unmanaged.passUnretained(self).toOpaque()
-        )
+        guard let profile = readProfile(device) else { return nil }
+        switchToMultitouch(device, reportID: profile.inputModeReportID)
 
-        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+        IOHIDDeviceRegisterInputValueCallback(device, { context, _, _, value in
+            guard let context else { return }
+            Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue().handle(value)
+        }, Unmanaged.passUnretained(self).toOpaque())
+
+        // Common modes: in default mode the touch stream stalls whenever a control in our
+        // own keyboard panel is tracking — precisely when a held button needs releasing.
+        IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+        return profile
     }
 
-    /// Best-effort: try the standard multitouch value, then the alternate, and try each
-    /// both with and without a leading report-ID byte — macOS is inconsistent about
-    /// whether SetReport expects one for numbered reports. A device already in digitizer
-    /// mode ignores all of it harmlessly.
-    @discardableResult
-    private func switchToMultitouch(_ device: IOHIDDevice) -> Bool {
-        for value in [InputMode.multitouch, InputMode.alternate] {
-            let payloads: [[UInt8]] = [
-                [value, 0x00],                      // InputMode, DeviceIndex
-                [InputMode.reportID, value, 0x00],  // with the report ID prefixed
-            ]
-            for var payload in payloads {
-                let result = IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature,
-                                                  CFIndex(InputMode.reportID), &payload, payload.count)
-                if result == kIOReturnSuccess {
+    /// Reads ranges and capabilities straight off the descriptor the device published.
+    private func readProfile(_ device: IOHIDDevice) -> DeviceProfile? {
+        guard let elements = IOHIDDeviceCopyMatchingElements(device, nil, 0) as? [IOHIDElement] else {
+            return nil
+        }
+
+        var maxX = 0.0
+        var maxY = 0.0
+        var tipSwitchCount = 0
+        var inputModeReportID: UInt8?
+
+        for element in elements {
+            let page = Int(IOHIDElementGetUsagePage(element))
+            let usage = Int(IOHIDElementGetUsage(element))
+            let logicalMax = Double(IOHIDElementGetLogicalMax(element))
+
+            switch (page, usage) {
+            case (Usage.Page.genericDesktop, Usage.x):
+                maxX = max(maxX, logicalMax)
+            case (Usage.Page.genericDesktop, Usage.y):
+                maxY = max(maxY, logicalMax)
+            case (Usage.Page.digitizer, Usage.tipSwitch):
+                // One tip switch per finger collection: the contact count as declared,
+                // rather than a number counted by hand off one descriptor.
+                tipSwitchCount += 1
+            case (Usage.Page.digitizer, Usage.inputMode):
+                if IOHIDElementGetType(element) == kIOHIDElementTypeFeature {
+                    inputModeReportID = UInt8(truncatingIfNeeded: IOHIDElementGetReportID(element))
+                }
+            default:
+                break
+            }
+        }
+
+        guard maxX > 0, maxY > 0 else { return nil }
+
+        let name = (IOHIDDeviceGetProperty(device, kIOHIDProductKey as CFString) as? String) ?? "Touchscreen"
+        return DeviceProfile(logicalMaxX: maxX, logicalMaxY: maxY,
+                             maxContacts: max(tipSwitchCount, 1),
+                             inputModeReportID: inputModeReportID,
+                             productName: name)
+    }
+
+    private func handle(_ value: IOHIDValue) {
+        let element = IOHIDValueGetElement(value)
+        let page = Int(IOHIDElementGetUsagePage(element))
+        let usage = Int(IOHIDElementGetUsage(element))
+
+        if let frame = assembler.accept(usagePage: page, usage: usage,
+                                        value: IOHIDValueGetIntegerValue(value), time: Clock.now()) {
+            onFrame?(frame)
+        }
+    }
+
+    /// Windows writes Input Mode to move the controller out of its mouse-compatibility
+    /// mode; macOS never does, which is why an untouched panel behaves like a button-only
+    /// pointing device. The report ID comes from the descriptor, not a constant.
+    private func switchToMultitouch(_ device: IOHIDDevice, reportID: UInt8?) {
+        guard let reportID else { return }
+
+        // 2 is "multi-touch" in the Windows digitizer spec; 3 is the precision-device value
+        // some controllers use instead. macOS is inconsistent about whether SetReport wants
+        // the ID prefixed, so both framings are tried.
+        for mode in [UInt8(0x02), UInt8(0x03)] {
+            for var payload in [[mode, 0x00], [reportID, mode, 0x00]] {
+                if IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature,
+                                        CFIndex(reportID), &payload, payload.count) == kIOReturnSuccess {
                     inputModeSet = true
-                    return true
+                    return
                 }
             }
         }
-        return false
     }
 
-    /// False means the panel may still be in its mouse-compatibility mode, which reports a
-    /// single contact and no gestures.
-    private(set) var inputModeSet = false
+    private func handleRemoval() {
+        onDisconnect?()
+        stop()
+    }
 
     /// Unschedules, closes and frees everything. Safe to call twice.
     func stop() {
-        // Unregister against the same buffer the callback was registered with, then free
-        // it — IOKit must not be left holding a pointer we are about to release.
-        for (device, entry) in zip(devices, buffers) {
-            IOHIDDeviceRegisterInputReportCallback(device, entry.pointer, entry.capacity, nil, nil)
-            IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
-            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
-            entry.pointer.deallocate()
+        for (index, device) in devices.enumerated() {
+            IOHIDDeviceRegisterInputValueCallback(device, nil, nil)
+            IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+            IOHIDDeviceClose(device, openOptionsByDevice.indices.contains(index)
+                             ? openOptionsByDevice[index]
+                             : IOOptionBits(kIOHIDOptionsTypeNone))
         }
         devices.removeAll()
-        buffers.removeAll()
+        openOptionsByDevice.removeAll()
 
         if let manager {
+            IOHIDManagerRegisterDeviceRemovalCallback(manager, nil, nil)
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
             IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
         }
         manager = nil
@@ -158,6 +203,7 @@ final class HIDTouchDevice {
     enum StartError: Error, CustomStringConvertible {
         case managerOpenFailed(IOReturn)
         case deviceNotFound
+        case unreadableDescriptor
 
         var description: String {
             switch self {
@@ -169,7 +215,9 @@ final class HIDTouchDevice {
             case .managerOpenFailed(let code):
                 return "Không mở được IOHIDManager (mã \(String(format: "0x%08x", code)))."
             case .deviceNotFound:
-                return "Không tìm thấy màn cảm ứng. Kiểm tra cáp USB rồi thử lại."
+                return "Không thấy thiết bị nào khai báo là Digitizer/Touch Screen. Kiểm tra cáp USB."
+            case .unreadableDescriptor:
+                return "Thiết bị không khai báo dải toạ độ X/Y — không map cảm ứng bằng cách đoán."
             }
         }
     }

@@ -16,9 +16,14 @@ final class CursorReturn {
     private var lastRealMouseActivity: TimeInterval = 0
     private var pendingWorkItem: DispatchWorkItem?
     private var tap: CFMachPort?
-    /// Set while we warp, because the warp itself generates an unmarked mouseMoved that
-    /// would otherwise be mistaken for the user grabbing the mouse.
-    private var isWarping = false
+    private var runLoopSource: CFRunLoopSource?
+    /// The warp generates its own unmarked mouseMoved, which would otherwise read as the
+    /// user grabbing the mouse. A flag cleared via async is useless here: that drains in
+    /// microseconds while the event round-trips the WindowServer in milliseconds. Use a
+    /// time window wide enough to cover the round trip.
+    private var ignoreRealMouseUntil: TimeInterval = 0
+    private let warpEchoWindow: TimeInterval = 0.15
+    private var hasStopped = false
 
     /// Installs the passive observer. Listen-only: it never modifies or drops an event.
     func startObservingRealMouse() -> Bool {
@@ -45,7 +50,7 @@ final class CursorReturn {
                 return Unmanaged.passUnretained(event)
             }
 
-            if !me.isWarping,
+            if Date().timeIntervalSinceReferenceDate > me.ignoreRealMouseUntil,
                event.getIntegerValueField(.eventSourceUserData) != EventSynthesizer.marker {
                 me.noteRealMouseActivity()
             }
@@ -63,6 +68,7 @@ final class CursorReturn {
 
         self.tap = tap
         let source = CFMachPortCreateRunLoopSource(kCFAllocatorDefault, tap, 0)
+        runLoopSource = source
         CFRunLoopAddSource(CFRunLoopGetMain(), source, CFRunLoopMode.commonModes)
         CGEvent.tapEnable(tap: tap, enable: true)
         return true
@@ -84,21 +90,32 @@ final class CursorReturn {
     func scheduleReturn(to mainDisplayCentre: CGPoint) {
         pendingWorkItem?.cancel()
 
-        let work = DispatchWorkItem { [weak self] in
-            guard let self else { return }
-            let idleFor = Date().timeIntervalSinceReferenceDate - self.lastRealMouseActivity
-            guard idleFor > self.mouseGrace else { return }
+        arm(after: quietPeriod, target: mainDisplayCentre)
+    }
 
-            self.isWarping = true
-            CGWarpMouseCursorPosition(mainDisplayCentre)
+    private func arm(after delay: TimeInterval, target: CGPoint) {
+        pendingWorkItem?.cancel()
+
+        let work = DispatchWorkItem { [weak self] in
+            guard let self, !self.hasStopped else { return }
+
+            let idleFor = Date().timeIntervalSinceReferenceDate - self.lastRealMouseActivity
+            guard idleFor > self.mouseGrace else {
+                // quietPeriod is shorter than mouseGrace, so the first attempt often lands
+                // too early. Wait out the remainder rather than dropping the return, which
+                // would leave the cursor stranded on the touchscreen for that whole session.
+                self.arm(after: self.mouseGrace - idleFor, target: target)
+                return
+            }
+
+            self.ignoreRealMouseUntil = Date().timeIntervalSinceReferenceDate + self.warpEchoWindow
+            CGWarpMouseCursorPosition(target)
             // Re-couple the hardware mouse to the cursor after a warp.
             CGAssociateMouseAndMouseCursorPosition(1)
-            // The warp's own mouseMoved lands on the next run-loop pass.
-            DispatchQueue.main.async { self.isWarping = false }
         }
 
         pendingWorkItem = work
-        DispatchQueue.main.asyncAfter(deadline: .now() + quietPeriod, execute: work)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay, execute: work)
     }
 
     func cancelPendingReturn() {
@@ -107,11 +124,16 @@ final class CursorReturn {
     }
 
     func stop() {
+        hasStopped = true
         cancelPendingReturn()
         if let tap {
             CGEvent.tapEnable(tap: tap, enable: false)
             CFMachPortInvalidate(tap)
         }
+        if let runLoopSource {
+            CFRunLoopRemoveSource(CFRunLoopGetMain(), runLoopSource, CFRunLoopMode.commonModes)
+        }
+        runLoopSource = nil
         tap = nil
     }
 }

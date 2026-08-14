@@ -51,10 +51,13 @@ final class KeyInjector {
               let up = CGEvent(keyboardEventSource: source, virtualKey: 0, keyDown: false)
         else { return }
 
+        guard !utf16.isEmpty else { return }
+
         down.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
         down.post(tap: .cghidEventTap)
 
-        up.keyboardSetUnicodeString(stringLength: utf16.count, unicodeString: &utf16)
+        // Payload on keyDown only: AppKit inserts there, and a consumer that reads both
+        // edges would otherwise insert the character twice.
         up.post(tap: .cghidEventTap)
     }
 
@@ -94,12 +97,15 @@ final class KeyInjector {
 
                     let status = UCKeyTranslate(
                         layout, UInt16(keyCode), UInt16(kUCKeyActionDown), modifierKey,
-                        UInt32(LMGetKbdType()), OptionBits(kUCKeyTranslateNoDeadKeysBit),
+                        UInt32(LMGetKbdType()), OptionBits(1 << kUCKeyTranslateNoDeadKeysBit),
                         &deadKeyState, chars.count, &length, &chars
                     )
 
                     guard status == noErr, length == 1,
-                          let scalar = String(utf16CodeUnits: chars, count: length).first
+                          let scalar = String(utf16CodeUnits: chars, count: length).first,
+                          !scalar.unicodeScalars.allSatisfy({
+                              $0.properties.generalCategory == .control
+                          })
                     else { continue }
 
                     // First writer wins: lower key codes are the primary keys.

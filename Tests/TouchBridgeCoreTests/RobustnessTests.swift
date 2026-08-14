@@ -3,83 +3,21 @@ import XCTest
 @testable import TouchBridgeCore
 
 /// Contracts that exist because the stream is hardware: reports arrive late, stop without
-/// warning, come from two collections at once, or carry stale slots.
+/// warning, and contact identities are not stable.
 final class RobustnessTests: XCTestCase {
 
     // MARK: contact count
 
     /// Slots past the reported contact count hold stale data — tip bit included. Trusting
     /// per-slot flags alone invents a second finger and silently kills taps and drags.
-    func testSlotsBeyondContactCountAreIgnored() throws {
-        var bytes = [UInt8](repeating: 0, count: 53)
-        // Slot 0: a genuine finger.
-        bytes[0] = 0x03; bytes[1] = 1; bytes[2] = 0x10; bytes[4] = 0x20
-        // Slot 1: stale leftovers that still look "touching".
-        bytes[10] = 0x03; bytes[11] = 9; bytes[12] = 0xFF; bytes[14] = 0xFF
-        bytes[50] = 1  // the controller says: one contact
-
-        let frame = try XCTUnwrap(HIDReportParser.parse(reportID: ReportID.digitizer, bytes: bytes, time: 0))
-        XCTAssertEqual(frame.contacts.map(\.id), [1])
-    }
-
-    func testContactCountLargerThanTheSlotArrayIsClamped() throws {
-        var bytes = [UInt8](repeating: 0, count: 53)
-        bytes[0] = 0x03; bytes[1] = 1
-        bytes[50] = 200  // nonsense value must not index out of bounds
-
-        let frame = try XCTUnwrap(HIDReportParser.parse(reportID: ReportID.digitizer, bytes: bytes, time: 0))
-        XCTAssertEqual(frame.contacts.count, 1)
-    }
-
     // MARK: report ID prefix
 
     /// IOKit hands some devices the body with the report ID still at byte 0. Parsing that
     /// as flags shifts every field by one and produces garbage coordinates.
-    func testDigitizerReportWithLeadingReportIDByteIsHandled() throws {
-        var body = [UInt8](repeating: 0, count: 53)
-        body[0] = 0x03; body[1] = 5; body[2] = 0x00; body[3] = 0x08; body[4] = 0x00; body[5] = 0x04
-        body[50] = 1
-
-        let prefixed = [ReportID.digitizer] + body
-
-        let frame = try XCTUnwrap(HIDReportParser.parse(reportID: ReportID.digitizer, bytes: prefixed, time: 0))
-        XCTAssertEqual(frame.contacts.count, 1)
-        XCTAssertEqual(frame.contacts[0].id, 5)
-        XCTAssertEqual(frame.contacts[0].x, 0x0800)
-        XCTAssertEqual(frame.contacts[0].y, 0x0400)
-    }
-
-    func testMouseReportWithLeadingReportIDByteIsHandled() throws {
-        let prefixed: [UInt8] = [ReportID.mouse, 0x01, 0xFF, 0x0F, 0x00, 0x00]
-
-        let frame = try XCTUnwrap(HIDReportParser.parse(reportID: ReportID.mouse, bytes: prefixed, time: 0))
-        XCTAssertEqual(frame.contacts.count, 1)
-        XCTAssertEqual(frame.contacts[0].x, 4095)
-        XCTAssertEqual(frame.contacts[0].y, 0)
-    }
-
     // MARK: mixed report streams
 
     /// The controller may emit both collections. Feeding both into one state machine makes
     /// a single-contact mouse report look like a finger lift mid-scroll.
-    func testLatchIgnoresTheOtherCollectionOnceOneIsProducingContacts() {
-        var latch = ReportStreamLatch()
-
-        XCTAssertTrue(latch.accepts(reportID: ReportID.digitizer, hasContacts: true))
-        XCTAssertFalse(latch.accepts(reportID: ReportID.mouse, hasContacts: true))
-        XCTAssertTrue(latch.accepts(reportID: ReportID.digitizer, hasContacts: false),
-                      "empty frames from the latched stream must still pass — they end the session")
-    }
-
-    func testLatchStaysOpenUntilSomethingActuallyReportsAContact() {
-        var latch = ReportStreamLatch()
-
-        XCTAssertTrue(latch.accepts(reportID: ReportID.digitizer, hasContacts: false))
-        XCTAssertTrue(latch.accepts(reportID: ReportID.mouse, hasContacts: true),
-                      "if the digitizer never produces contacts, the mouse collection wins")
-        XCTAssertFalse(latch.accepts(reportID: ReportID.digitizer, hasContacts: true))
-    }
-
     // MARK: the stream stopping
 
     /// Unplug, sleep, or a dropped final report must not leave the left button held down.
@@ -90,7 +28,7 @@ final class RobustnessTests: XCTestCase {
 
         // Well past staleDragTimeout: the stream is gone, the button must not stay down.
         let events = r.tick(at: 5.0)
-        XCTAssertEqual(events, [.dragEnded(at: CGPoint(x: 100, y: 0)), .sessionEnded])
+        XCTAssertEqual(events, [.dragEnded(at: CGPoint(x: 100, y: 0))])
     }
 
     /// Quit and unplug both route here; neither may leave a button logically pressed.
@@ -137,7 +75,9 @@ final class RobustnessTests: XCTestCase {
         _ = r.handle(MappedFrame(contacts: [MappedContact(id: 1, point: CGPoint(x: 100, y: 0))], time: 0.05))
 
         let events = r.handle(MappedFrame(contacts: [MappedContact(id: 7, point: CGPoint(x: 900, y: 500))], time: 0.1))
-        XCTAssertEqual(events, [.dragEnded(at: CGPoint(x: 100, y: 0)), .sessionEnded])
+        XCTAssertEqual(events, [.dragEnded(at: CGPoint(x: 100, y: 0))],
+                       "the drag closes where it was, but the session lives on — a finger "
+                       + "is still down, and ending it would warp the cursor away")
     }
 
     func testTapIsAbandonedWhenTheTrackedFingerIsReplaced() {
@@ -148,11 +88,37 @@ final class RobustnessTests: XCTestCase {
         XCTAssertFalse(events.contains { if case .leftClick = $0 { return true } else { return false } })
     }
 
+    /// Contacts do not have to occupy the first N slots; a controller may use 0 and 3.
+    /// The buttons byte can legitimately be 0x03 (both buttons). A 5-byte report is a body,
+    /// not a prefixed one, and eating byte 0 would read X and Y from the wrong offsets.
+    /// A palm is huge in one axis; checking only width would let a forearm through.
+    /// Pins the shipped default rather than only ever testing an explicit argument.
     // MARK: calibration sanity
+
+    func testDegenerateYRangeFallsBackIndependentlyOfX() {
+        let mapper = CoordinateMapper(
+            logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: CGRect(x: 0, y: 0, width: 1000, height: 1000),
+            calibration: Calibration(xMin: 0.25, xMax: 0.75, yMin: 0.5, yMax: 0.5)
+        )
+
+        // X keeps its calibration, Y falls back to the full range.
+        XCTAssertEqual(mapper.globalPoint(x: 4095, y: 4095), CGPoint(x: 1000, y: 1000))
+        XCTAssertEqual(mapper.globalPoint(x: 2047, y: 0).y, 0, accuracy: 0.5)
+    }
+
+    func testCalibrationOutsideZeroToOneFallsBack() {
+        let mapper = CoordinateMapper(
+            logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: CGRect(x: 0, y: 0, width: 1000, height: 1000),
+            calibration: Calibration(xMin: 2, xMax: 3, yMin: 0, yMax: 1)
+        )
+
+        XCTAssertEqual(mapper.globalPoint(x: 0, y: 0), .zero)
+        XCTAssertEqual(mapper.globalPoint(x: 4095, y: 4095), CGPoint(x: 1000, y: 1000))
+    }
 
     func testDegenerateCalibrationFallsBackToIdentityInsteadOfPinningToTheEdge() {
         let mapper = CoordinateMapper(
-            displayBounds: CGRect(x: -1920, y: 0, width: 1920, height: 1080),
+            logicalMaxX: 4095, logicalMaxY: 4095, displayBounds: CGRect(x: -1920, y: 0, width: 1920, height: 1080),
             calibration: Calibration(xMin: 0.8, xMax: 0.2, yMin: 0, yMax: 1)
         )
 

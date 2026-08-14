@@ -46,6 +46,19 @@ final class KeyboardPanel: NSPanel {
     }
 }
 
+extension NSWindow {
+    /// Frame in the global, top-left-origin space that CGEvent and CGDisplayBounds use.
+    /// `NSWindow.frame` is bottom-left-origin with Y increasing upward, so comparing it
+    /// against a mapped touch point directly would test the wrong half of the screen.
+    var cgFrame: CGRect {
+        guard let primary = NSScreen.screens.first else { return frame }
+        return CGRect(x: frame.minX,
+                      y: primary.frame.maxY - frame.maxY,
+                      width: frame.width,
+                      height: frame.height)
+    }
+}
+
 extension NSScreen {
     var displayID: CGDirectDisplayID? {
         deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID

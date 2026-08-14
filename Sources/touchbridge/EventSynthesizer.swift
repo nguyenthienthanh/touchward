@@ -40,25 +40,47 @@ final class EventSynthesizer {
             post(.rightMouseUp, at: p, button: .right)
 
         case .dragBegan(let p):
-            post(.leftMouseDown, at: p, button: .left)
+            pressLeft(at: p)
 
         case .dragMoved(let p):
             post(.leftMouseDragged, at: p, button: .left)
 
         case .dragEnded(let p):
-            post(.leftMouseUp, at: p, button: .left)
+            releaseLeft(at: p)
 
         case .scroll(let dx, let dy, _):
             postScroll(dx: dx, dy: dy)
 
         case .sessionEnded:
-            break  // CursorReturn owns this
+            // Carrying a remainder into an unrelated later gesture can emit a step in the
+            // wrong direction on its first frame.
+            residualX = 0
+            residualY = 0
         }
+    }
+
+    /// Direct press/release, bypassing gesture classification. The on-screen keyboard uses
+    /// these: a key must go down the instant a finger lands and up when it leaves, with no
+    /// tap-duration or movement test in between.
+    func pressLeft(at point: CGPoint) {
+        post(.leftMouseDown, at: point, button: .left)
+    }
+
+    func releaseLeft(at point: CGPoint) {
+        post(.leftMouseUp, at: point, button: .left)
     }
 
     private func post(_ type: CGEventType, at point: CGPoint, button: CGMouseButton) {
         guard let event = CGEvent(mouseEventSource: source, mouseType: type,
                                   mouseCursorPosition: point, mouseButton: button) else { return }
+        // Apps that gate on clickCount >= 1 (custom text views, web content) ignore a
+        // click that arrives with 0.
+        switch type {
+        case .leftMouseDown, .leftMouseUp, .rightMouseDown, .rightMouseUp:
+            event.setIntegerValueField(.mouseEventClickState, value: 1)
+        default:
+            break
+        }
         event.post(tap: .cghidEventTap)
     }
 
@@ -71,6 +93,14 @@ final class EventSynthesizer {
     private func postScroll(dx: CGFloat, dy: CGFloat) {
         residualX += dx
         residualY += dy
+
+        // A degenerate display rect can produce NaN, and Int32(NaN) traps — a crash here
+        // would abort the process while a mouse button may be held down.
+        guard residualX.isFinite, residualY.isFinite else {
+            residualX = 0
+            residualY = 0
+            return
+        }
 
         let stepX = residualX.rounded(.towardZero)
         let stepY = residualY.rounded(.towardZero)
@@ -89,8 +119,4 @@ final class EventSynthesizer {
         event.post(tap: .cghidEventTap)
     }
 
-    /// Belt and braces for quit paths: release the left button wherever the cursor is.
-    func releaseLeftButtonIfHeld(at point: CGPoint) {
-        post(.leftMouseUp, at: point, button: .left)
-    }
 }

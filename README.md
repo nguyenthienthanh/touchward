@@ -54,23 +54,42 @@ chỗ duy nhất quyết định chiều.
 Tách đôi có chủ đích, để phần logic kiểm chứng được mà không cần quyền hệ thống:
 
 ```
-TouchBridgeCore/          ← hàm thuần, 44 unit test, chạy `swift test` không cần TCC
-  HIDReportParser         báo cáo 0x91 (digitizer 5 điểm) và 0x03 (mouse dự phòng)
-  CoordinateMapper        0…4095 → toạ độ global, có calibration + clamp
+TouchBridgeCore/          ← hàm thuần, 60 unit test, chạy `swift test` không cần TCC
+  TouchValueAssembler     ghép frame từ (usage, value) đã decode — không offset byte
+  PalmFilter              ngưỡng theo dải thật của thiết bị, không theo hằng số
+  CoordinateMapper        raw → toạ độ global, có calibration + clamp
   GestureRecognizer       state machine kiểu trackpad
 
 touchbridge/              ← tầng hệ thống, không unit test được
-  HIDTouchDevice          IOHIDManager, seize, feature report bật multitouch
+  HIDTouchDevice          tìm thiết bị theo HID usage, đọc profile từ descriptor
   EventSynthesizer        CGEvent có đóng dấu nguồn
   CursorReturn            trả con trỏ + hàng rào bảo vệ chuột thật
-  DisplayRegistry         nhận diện màn theo vendor/model/serial
-  TouchPipeline           dây nối: byte vào, sự kiện chuột ra
+  DisplayRegistry         suy ra màn cảm ứng, hoặc báo lỗi rõ ràng
+  TouchPipeline           dây nối: frame vào, sự kiện chuột ra
   Keyboard/               NSPanel không-giành-focus + AX focus + key injection
 ```
 
 ```bash
-swift test    # 44 test, không cần quyền gì
+swift test    # 60 test, không cần quyền gì
 ```
+
+## Không hardcode gì về thiết bị
+
+Nguyên tắc: **hỏi thiết bị, đừng đoán.** Không có VID/PID, serial màn hình, số điểm chạm,
+dải toạ độ hay offset byte nào được ghi cứng trong code:
+
+| Thứ cần biết | Lấy từ đâu |
+|---|---|
+| Thiết bị nào là màn cảm ứng | HID usage `Digitizer / Touch Screen` |
+| Dải toạ độ X, Y | `IOHIDElementGetLogicalMax` của chính element X/Y |
+| Số điểm chạm tối đa | Đếm element Tip Switch trong descriptor |
+| Report ID để bật multitouch | Element Input Mode kiểu Feature |
+| Bố cục report | Không cần — IOKit decode sẵn, code chỉ đọc `(usage, value)` |
+| Ngưỡng loại lòng bàn tay | Tỉ lệ trên dải thật của thiết bị |
+
+Màn hình cảm ứng là ngoại lệ duy nhất: macOS không có API nối thiết bị USB với
+`CGDirectDisplayID`. Nếu chỉ có đúng một màn phụ, app suy ra; nếu nhiều hơn, app **báo lỗi
+rõ ràng** thay vì đoán bừa — đặt `TOUCHBRIDGE_DISPLAY_ID=<id>` để chỉ định.
 
 ## Không đụng vào chuột và bàn phím thật
 
@@ -108,9 +127,9 @@ hạn 2 giây: nếu luồng report chết giữa lúc kéo, nút được nhả
   cứng vào `CGEventSource`, đồng hồ và IOKit nên chưa có chỗ chèn test. Muốn kiểm chứng bất
   biến "mọi `leftMouseDown` đều có `leftMouseUp` tương ứng" thì cần tách một protocol
   `PointerSink` — đáng làm nếu code này sống lâu.
-- **Chưa xác minh trên phần cứng.** Toàn bộ logic được suy ra từ report descriptor đọc được,
-  chưa chạy thật vì thiếu quyền TCC. Parser đã viết để chịu được cả hai khả năng còn mơ hồ
-  (report ID có bị cắt khỏi buffer hay không, panel đang ở digitizer hay mouse mode).
+- **Chưa xác minh trên phần cứng.** Chưa chạy thật vì thiếu quyền TCC. Việc chuyển sang
+  đọc giá trị đã decode đã loại bỏ phần lớn chỗ có thể đoán sai, nhưng lần chạy đầu vẫn có
+  thể lộ ra thứ cần chỉnh.
 
 ## Nghiệm thu tay
 

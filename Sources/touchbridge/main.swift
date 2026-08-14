@@ -45,26 +45,21 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var touchDisplayID: CGDirectDisplayID?
     private var secureInputPoll: Timer?
     private var hasShutDown = false
+    private var lastFocusWasSecureField = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let touchDisplay = DisplayRegistry.touchDisplay(),
               let mainDisplay = DisplayRegistry.mainDisplay() else {
-            log("❌ Không xác định được màn cảm ứng. Đang có \(DisplayRegistry.activeDisplays().count) màn hình.")
-            NSApp.terminate(nil)
-            return
+            log("""
+                ❌ Không xác định được màn hình nào là màn cảm ứng \
+                (đang có \(DisplayRegistry.activeDisplays().count) màn hình).
+                Rút bớt màn phụ khác rồi chạy lại, hoặc đặt TOUCHBRIDGE_DISPLAY_ID=<id>.
+                """)
+            exit(1)
         }
 
         touchDisplayID = touchDisplay
         log("🖥  Màn cảm ứng: display \(touchDisplay) bounds \(CGDisplayBounds(touchDisplay))")
-
-        guard let pipeline = TouchPipeline(touchDisplay: touchDisplay,
-                                           mainDisplay: mainDisplay,
-                                           cursorReturn: cursorReturn) else {
-            log("❌ Không tạo được CGEventSource.")
-            NSApp.terminate(nil)
-            return
-        }
-        self.pipeline = pipeline
 
         installShutdownHandlers()
 
@@ -81,10 +76,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             }
         }
 
-        switch device.start(onReport: { [weak pipeline] id, bytes, time in
-            pipeline?.handleReport(id: id, bytes: bytes, time: time)
+        // The device is started first: everything downstream is sized from what it
+        // declares, so there is nothing to configure until it has answered.
+        let profile: DeviceProfile
+        switch device.start(onFrame: { [weak self] frame in
+            self?.pipeline?.handle(frame)
         }) {
-        case .success:
+        case .success(let discovered):
+            profile = discovered
+            log("🔎 \(profile.productName): \(Int(profile.logicalMaxX))×\(Int(profile.logicalMaxY)) "
+                + "logical, tối đa \(profile.maxContacts) điểm chạm")
             log(device.isSeized
                 ? "✅ Đã giành thiết bị cảm ứng (seize) — macOS thôi tự sinh click."
                 : "⚠️  Không seize được thiết bị; macOS có thể vẫn sinh click ma tại con trỏ.")
@@ -93,10 +94,17 @@ final class AppController: NSObject, NSApplicationDelegate {
                 : "ℹ️  Không đổi được chế độ nhập; nếu chỉ nhận 1 điểm chạm thì panel đang ở mouse mode.")
         case .failure(let error):
             log("❌ \(error.description)")
-            NSApp.terminate(nil)
-            return
+            exit(1)
         }
 
+        guard let pipeline = TouchPipeline(profile: profile,
+                                           touchDisplay: touchDisplay,
+                                           mainDisplay: mainDisplay,
+                                           cursorReturn: cursorReturn) else {
+            log("❌ Không tạo được CGEventSource.")
+            exit(1)
+        }
+        self.pipeline = pipeline
         pipeline.start()
 
         DisplayRegistry.onReconfiguration { [weak self] in
@@ -139,8 +147,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard !hasShutDown else { return }
         hasShutDown = true
 
-        pipeline?.stop()          // releases any held button first
+        // Order is load-bearing: the pipeline releases any held button through a still
+        // live event source, and cursorReturn.stop() then cancels the warp that release
+        // just armed. Reversing these two lines lets a warp fire after teardown.
+        pipeline?.stop()
         device.stop()
+        focusWatcher.stop()
         cursorReturn.stop()
         stopSecureInputPolling()
         panel?.dismiss()
@@ -163,22 +175,32 @@ final class AppController: NSObject, NSApplicationDelegate {
         self.panel = panel
         self.keyboardView = view
 
+        // Touches landing on the keyboard bypass gesture classification entirely.
+        pipeline?.directTouchRegion = { [weak panel] in
+            guard let panel, panel.isVisible else { return nil }
+            return panel.cgFrame
+        }
+
         focusWatcher.start { [weak self] focus in
             // Read the display ID fresh rather than capturing it: replugging the panel
             // mints a new CGDirectDisplayID, and a captured stale one silently resolves to
             // no screen — the keyboard would simply stop appearing, with no error.
-            guard let self,
-                  let displayID = self.touchDisplayID,
-                  let screen = NSScreen.matching(displayID: displayID) else { return }
+            guard let self else { return }
 
-            if focus.isTextInput {
-                view.setSecureInputWarning(focus.isSecureField || self.injector.isSecureInputActive)
-                panel.present(on: screen)
-                self.startSecureInputPolling()
-            } else {
+            // Dismissal must not depend on finding the screen: if the panel is unplugged
+            // while the keyboard is up, a later non-text focus still has to put it away.
+            guard focus.isTextInput else {
                 panel.dismiss()
                 self.stopSecureInputPolling()
+                return
             }
+            guard let displayID = self.touchDisplayID,
+                  let screen = NSScreen.matching(displayID: displayID) else { return }
+
+            self.lastFocusWasSecureField = focus.isSecureField
+            view.setSecureInputWarning(focus.isSecureField || self.injector.isSecureInputActive)
+            panel.present(on: screen)
+            self.startSecureInputPolling()
         }
     }
 
@@ -187,7 +209,10 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard secureInputPoll == nil else { return }
         secureInputPoll = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
             guard let self else { return }
-            self.keyboardView?.setSecureInputWarning(self.injector.isSecureInputActive)
+            // The AX subrole ("this is a password field") and the system flag ("synthetic
+            // keys are blocked right now") are different facts and routinely disagree.
+            self.keyboardView?.setSecureInputWarning(
+                self.lastFocusWasSecureField || self.injector.isSecureInputActive)
         }
     }
 
