@@ -110,7 +110,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             self?.pipeline?.releaseEverything()
         }
 
-        setUpKeyboard(on: touchDisplay)
+        setUpKeyboard()
         log("▶️  TouchBridge đang chạy. Ctrl-C để thoát.")
     }
 
@@ -155,7 +155,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func setUpKeyboard(on touchDisplay: CGDirectDisplayID) {
+    private func setUpKeyboard() {
         let view = KeyboardView(injector: injector)
         let panel = KeyboardPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 300))
         panel.contentView = view
@@ -164,7 +164,12 @@ final class AppController: NSObject, NSApplicationDelegate {
         self.keyboardView = view
 
         focusWatcher.start { [weak self] focus in
-            guard let self, let screen = NSScreen.matching(displayID: touchDisplay) else { return }
+            // Read the display ID fresh rather than capturing it: replugging the panel
+            // mints a new CGDirectDisplayID, and a captured stale one silently resolves to
+            // no screen — the keyboard would simply stop appearing, with no error.
+            guard let self,
+                  let displayID = self.touchDisplayID,
+                  let screen = NSScreen.matching(displayID: displayID) else { return }
 
             if focus.isTextInput {
                 view.setSecureInputWarning(focus.isSecureField || self.injector.isSecureInputActive)
