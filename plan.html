@@ -1,0 +1,838 @@
+<title>SiS Touch Bridge</title>
+<style>
+  :root {
+    --bg: #F6F7F9;
+    --surface: #FFFFFF;
+    --surface-2: #EDF0F3;
+    --text: #14181F;
+    --muted: #5B6572;
+    --border: #D8DEE5;
+    --border-soft: #E6EAEF;
+    --accent: #0F766E;
+    --accent-soft: #DFF0EE;
+    --warn: #9A5B08;
+    --warn-soft: #FBEEDA;
+    --danger: #B42318;
+    --danger-soft: #FBE6E4;
+    --ok: #15803D;
+    --ok-soft: #DFF2E5;
+    --code-bg: #F2F5F7;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0F1317;
+      --surface: #161B21;
+      --surface-2: #1C232B;
+      --text: #E4E8EC;
+      --muted: #94A1AE;
+      --border: #2A333D;
+      --border-soft: #222A33;
+      --accent: #2DD4BF;
+      --accent-soft: #103330;
+      --warn: #E0A64A;
+      --warn-soft: #2E2412;
+      --danger: #F87171;
+      --danger-soft: #331A19;
+      --ok: #4ADE80;
+      --ok-soft: #122C1D;
+      --code-bg: #11161B;
+    }
+  }
+  :root[data-theme="dark"] {
+    --bg: #0F1317;
+    --surface: #161B21;
+    --surface-2: #1C232B;
+    --text: #E4E8EC;
+    --muted: #94A1AE;
+    --border: #2A333D;
+    --border-soft: #222A33;
+    --accent: #2DD4BF;
+    --accent-soft: #103330;
+    --warn: #E0A64A;
+    --warn-soft: #2E2412;
+    --danger: #F87171;
+    --danger-soft: #331A19;
+    --ok: #4ADE80;
+    --ok-soft: #122C1D;
+    --code-bg: #11161B;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: -apple-system, "SF Pro Text", "Segoe UI", system-ui, sans-serif;
+    font-size: 16.5px;
+    line-height: 1.65;
+    margin: 0;
+    padding: 0 24px 120px;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 820px;
+    margin: 0 auto;
+    display: flex;
+    flex-direction: column;
+    gap: 0;
+  }
+
+  code, pre, .mono, table {
+    font-family: "SF Mono", ui-monospace, Menlo, Consolas, monospace;
+  }
+
+  /* ---------- masthead ---------- */
+  header.masthead {
+    padding: 72px 0 40px;
+    border-bottom: 2px solid var(--text);
+    display: flex;
+    flex-direction: column;
+    gap: 18px;
+  }
+  .eyebrow {
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    letter-spacing: 0.14em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+  }
+  h1 {
+    font-family: -apple-system, "SF Pro Display", system-ui, sans-serif;
+    font-size: clamp(38px, 6vw, 58px);
+    line-height: 1.02;
+    letter-spacing: -0.032em;
+    font-weight: 700;
+    margin: 0;
+    text-wrap: balance;
+  }
+  .standfirst {
+    font-size: 19px;
+    line-height: 1.55;
+    color: var(--muted);
+    margin: 0;
+    max-width: 62ch;
+    text-wrap: pretty;
+  }
+  .verdict {
+    background: var(--accent-soft);
+    border-left: 3px solid var(--accent);
+    padding: 16px 20px;
+    font-size: 16px;
+    line-height: 1.6;
+  }
+  .verdict strong { font-weight: 650; }
+
+  /* ---------- sections ---------- */
+  section {
+    padding: 52px 0 0;
+    display: flex;
+    flex-direction: column;
+    gap: 20px;
+  }
+  h2 {
+    font-family: -apple-system, "SF Pro Display", system-ui, sans-serif;
+    font-size: clamp(25px, 3.4vw, 32px);
+    letter-spacing: -0.022em;
+    font-weight: 680;
+    line-height: 1.15;
+    margin: 0;
+    text-wrap: balance;
+  }
+  h3 {
+    font-size: 18px;
+    font-weight: 650;
+    letter-spacing: -0.01em;
+    margin: 0;
+    line-height: 1.3;
+  }
+  h4 {
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.1em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    margin: 0;
+  }
+  p { margin: 0; max-width: 68ch; text-wrap: pretty; }
+  .stack { display: flex; flex-direction: column; gap: 14px; }
+  .stack-tight { display: flex; flex-direction: column; gap: 8px; }
+
+  ul, ol { margin: 0; padding-left: 22px; display: flex; flex-direction: column; gap: 9px; max-width: 68ch; }
+  li { text-wrap: pretty; }
+  li::marker { color: var(--muted); }
+
+  a { color: var(--accent); text-decoration-thickness: 1px; text-underline-offset: 2px; }
+  a:focus-visible, summary:focus-visible { outline: 2px solid var(--accent); outline-offset: 3px; border-radius: 2px; }
+
+  code:not(pre code) {
+    background: var(--code-bg);
+    border: 1px solid var(--border-soft);
+    padding: 1px 5px;
+    font-size: 0.87em;
+    border-radius: 3px;
+    white-space: nowrap;
+  }
+
+  pre {
+    background: var(--code-bg);
+    border: 1px solid var(--border);
+    padding: 16px 18px;
+    overflow-x: auto;
+    font-size: 13px;
+    line-height: 1.6;
+    margin: 0;
+    tab-size: 2;
+  }
+  pre .c { color: var(--muted); }
+  pre .k { color: var(--accent); }
+
+  /* ---------- spec sheet ---------- */
+  .specs {
+    border-top: 1px solid var(--border);
+    display: grid;
+    grid-template-columns: minmax(150px, 240px) 1fr;
+  }
+  .specs > div {
+    padding: 11px 4px;
+    border-bottom: 1px solid var(--border-soft);
+    font-size: 14.5px;
+  }
+  .specs > div:nth-child(odd) {
+    color: var(--muted);
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 12.5px;
+    letter-spacing: 0.02em;
+    text-transform: uppercase;
+    padding-top: 14px;
+  }
+  .specs > div:nth-child(even) {
+    font-variant-numeric: tabular-nums;
+  }
+  .specs b { font-weight: 640; }
+
+  /* ---------- tables ---------- */
+  .tablewrap { overflow-x: auto; border: 1px solid var(--border); }
+  table { border-collapse: collapse; width: 100%; font-size: 13.5px; }
+  th, td { text-align: left; padding: 10px 13px; border-bottom: 1px solid var(--border-soft); vertical-align: top; }
+  th {
+    background: var(--surface-2);
+    font-size: 11.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    font-weight: 600;
+    white-space: nowrap;
+  }
+  tbody tr:last-child td { border-bottom: none; }
+  td.num { font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ---------- option cards ---------- */
+  .options { display: flex; flex-direction: column; gap: 14px; }
+  .opt {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    padding: 20px 22px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+  .opt.pick { border-color: var(--accent); border-width: 1.5px; }
+  .opt-head { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+  .opt-head h3 { flex: 1; min-width: 200px; }
+  .pill {
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 10.5px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    font-weight: 600;
+    padding: 3px 8px;
+    border-radius: 100px;
+    white-space: nowrap;
+  }
+  .pill.ok { background: var(--ok-soft); color: var(--ok); }
+  .pill.warn { background: var(--warn-soft); color: var(--warn); }
+  .pill.no { background: var(--danger-soft); color: var(--danger); }
+  .pill.accent { background: var(--accent-soft); color: var(--accent); }
+  .cols { display: grid; grid-template-columns: 1fr 1fr; gap: 8px 26px; }
+  @media (max-width: 620px) { .cols { grid-template-columns: 1fr; } }
+  .cols ul { padding-left: 18px; gap: 5px; font-size: 14.5px; }
+  .plus::marker { color: var(--ok); }
+  .minus::marker { color: var(--danger); }
+
+  /* ---------- callouts ---------- */
+  .note {
+    border-left: 3px solid var(--warn);
+    background: var(--warn-soft);
+    padding: 14px 18px;
+    font-size: 15px;
+    line-height: 1.6;
+    display: flex;
+    flex-direction: column;
+    gap: 7px;
+  }
+  .note.info { border-left-color: var(--accent); background: var(--accent-soft); }
+  .note.bad { border-left-color: var(--danger); background: var(--danger-soft); }
+  .note h4 { color: inherit; opacity: 0.75; }
+
+  /* ---------- phases ---------- */
+  .phases { display: flex; flex-direction: column; }
+  .phase {
+    display: grid;
+    grid-template-columns: 54px 1fr;
+    gap: 18px;
+    padding: 18px 0;
+    border-top: 1px solid var(--border-soft);
+    align-items: start;
+  }
+  .phase:first-child { border-top: 1px solid var(--border); }
+  .phase-n {
+    font-family: "SF Mono", ui-monospace, Menlo, monospace;
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--accent);
+    letter-spacing: 0.06em;
+    padding-top: 3px;
+    font-variant-numeric: tabular-nums;
+  }
+  .phase-body { display: flex; flex-direction: column; gap: 7px; }
+  .phase-body p { font-size: 15px; color: var(--muted); }
+  .phase-body strong { color: var(--text); font-weight: 640; }
+
+  /* ---------- coordinate diagram ---------- */
+  figure { margin: 0; display: flex; flex-direction: column; gap: 10px; }
+  figcaption { font-size: 13.5px; color: var(--muted); max-width: 68ch; }
+  .diagram { width: 100%; height: auto; overflow-x: auto; }
+
+  details {
+    border: 1px solid var(--border);
+    background: var(--surface);
+    padding: 0;
+  }
+  summary {
+    cursor: pointer;
+    padding: 13px 18px;
+    font-weight: 620;
+    font-size: 15px;
+    list-style-position: inside;
+  }
+  details[open] summary { border-bottom: 1px solid var(--border-soft); }
+  .details-body { padding: 16px 18px; display: flex; flex-direction: column; gap: 12px; }
+
+  footer {
+    margin-top: 60px;
+    padding-top: 24px;
+    border-top: 1px solid var(--border);
+    font-size: 13.5px;
+    color: var(--muted);
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+  }
+</style>
+
+<div class="wrap">
+
+<header class="masthead">
+  <div class="eyebrow">Kế hoạch kỹ thuật · macOS · Darwin 25.5</div>
+  <h1>SiS Touch Bridge</h1>
+  <p class="standfirst">Biến màn hình cảm ứng USB 1920×1080 thành một thiết bị trỏ tuyệt đối trên macOS: chạm đúng điểm, cuộn hai chiều, bàn phím ảo tại chỗ, con trỏ tự về màn hình chính — mà không đụng tới chuột và bàn phím thật.</p>
+  <div class="verdict">
+    <strong>Kết luận ngắn:</strong> vấn đề đã được chẩn đoán chính xác trên đúng phần cứng của bạn, không còn phải đoán. Màn hình dùng chip <b>SiS HID Touch Controller</b> và nó <em>có</em> gửi toạ độ tuyệt đối — macOS chỉ đơn giản là không dùng chúng. Một app Swift chạy ở user-space (không kext, không tắt SIP) đọc thẳng HID rồi tự bắn sự kiện chuột là giải pháp đúng, và đã có repo mã nguồn mở làm sẵn gần hết logic để bạn chép.
+  </div>
+</header>
+
+<section>
+  <h4>Đọc từ máy bạn</h4>
+  <h2>Phần cứng thực tế, không phải suy đoán</h2>
+  <p>Tôi đã dò IORegistry và giải mã report descriptor của thiết bị trên chính máy này. Đây là các con số bạn sẽ hard-code hoặc dò động trong code.</p>
+
+  <div class="specs">
+    <div>Thiết bị</div><div><b>SiS HID Touch Controller</b> — Silicon Integrated System Co.</div>
+    <div>VID / PID</div><div>1111 / 2073 &nbsp;(<code>0x0457</code> / <code>0x0819</code>)</div>
+    <div>Transport</div><div>USB, LocationID <code>0x100000</code></div>
+    <div>Driver đang bind</div><div><code>AppleUserHIDEventDriver</code> (DEXT hệ thống)</div>
+    <div>Usage pairs</div><div>Digitizer/TouchScreen <code>0x0D:0x04</code> · <b>Mouse <code>0x01:0x02</code></b> · Pointer <code>0x01:0x01</code> · DeviceConfig <code>0x0D:0x0E</code></div>
+    <div>Màn cảm ứng</div><div>CGDisplayID <b>2</b> — bounds <b>(−1920, 0, 1920, 1080)</b></div>
+    <div>Màn chính</div><div>CGDisplayID <b>5</b> — bounds (0, 0, 2560, 1440)</div>
+    <div>Dải toạ độ touch</div><div>X: 0…4095 · Y: 0…4095 &nbsp;(16-bit, logical max 4095)</div>
+    <div>Số điểm chạm</div><div>5 finger collections</div>
+  </div>
+
+  <div class="note info">
+    <h4>Chi tiết quyết định toàn bộ thiết kế</h4>
+    <p>Màn cảm ứng nằm ở <b>origin X = −1920</b>, tức là <em>bên trái</em> màn chính trong hệ toạ độ global. Mọi công thức map toạ độ phải cộng origin âm này. Đây là lỗi kinh điển: code giả định origin (0,0) sẽ bắn click sang màn hình chính, đúng y cái bug bạn đang gặp — chỉ khác nguyên nhân.</p>
+  </div>
+</section>
+
+<section>
+  <h4>Chẩn đoán</h4>
+  <h2>Vì sao chạm màn phụ lại click ở màn chính</h2>
+
+  <p>Report descriptor (683 byte) giải mã ra ba nhóm report. Đọc chúng là hiểu ngay hành vi bạn thấy:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead>
+        <tr><th>Report</th><th>Loại</th><th>Nội dung</th><th>macOS làm gì</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td class="num"><b>0x91</b> (145)</td>
+          <td>Input · Digitizer</td>
+          <td>5 finger × {TipSwitch 1b, Confidence 1b, pad 6b, ContactID 8b, X 16b, Y 16b, Width 16b, Height 16b} + ContactCount + ScanTime</td>
+          <td><span class="pill no">Bỏ qua</span> Không có driver digitizer→con trỏ</td>
+        </tr>
+        <tr>
+          <td class="num"><b>0x03</b></td>
+          <td>Input · Mouse</td>
+          <td>Button 1–2 (2 bit) + pad 6b + X 16b + Y 16b, logical 0…4095, cờ <code>0x02</code> = <b>ABSOLUTE</b></td>
+          <td><span class="pill warn">Chỉ lấy nút</span> Coi collection Mouse là thiết bị tương đối nên vứt X/Y</td>
+        </tr>
+        <tr>
+          <td class="num"><b>0x07</b></td>
+          <td>Feature · DeviceConfig</td>
+          <td><code>InputMode</code> (usage 0x52) + <code>DeviceIndex</code>, 2 byte</td>
+          <td><span class="pill no">Không gửi</span> Windows gửi report này để bật multitouch; macOS thì không</td>
+        </tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>Ghép lại thành một câu: <b>thiết bị là loại dual-mode.</b> Nó có thừa dữ liệu bạn cần — toạ độ tuyệt đối nằm sẵn trong cả report 0x91 lẫn 0x03, thậm chí report Mouse còn khai báo sẵn cả nút phải. Nhưng <code>AppleUserHIDEventDriver</code> không dịch digitizer thành chuyển động con trỏ, và với collection Mouse thì nó xử lý theo quy ước "chuột = tương đối" nên bỏ luôn cặp X/Y tuyệt đối. Thứ duy nhất sống sót tới WindowServer là bit Button 1 — và một cú nhấn nút không kèm toạ độ thì rơi vào đúng chỗ con trỏ đang đứng.</p>
+
+  <p>Hành vi này khớp với thứ Apple đã xác nhận nhiều lần: macOS không hề có driver chuyển toạ độ tuyệt đối của HID digitizer thành vị trí con trỏ. Trên <a href="https://developer.apple.com/forums/thread/768586">Apple Developer Forums thread 768586</a>, một kỹ sư mô tả thiết bị digitizer chuẩn HID (chạy tốt trên Windows 11) gửi report vào macOS "được xử lý thành công, nhưng không có gì xảy ra — con trỏ không di chuyển, không nhận cử chỉ". Ngay cả DEXT tự viết gọi <code>dispatchDigitizerTouchEvent</code> cũng im lặng; chỉ <code>dispatchRelativePointerEvent</code> là có tác dụng.</p>
+
+  <div class="note">
+    <h4>Hệ quả tốt</h4>
+    <p>Triệu chứng "click tại con trỏ" thực ra là tin mừng: nó chứng minh thiết bị đang gửi dữ liệu qua USB HID bình thường và macOS đang lắng nghe. Bạn không phải viết driver kernel — chỉ cần giành quyền đọc thiết bị và tự dịch toạ độ.</p>
+  </div>
+</section>
+
+<section>
+  <h4>Lựa chọn</h4>
+  <h2>Bốn đường đi, xếp theo công sức</h2>
+
+  <div class="options">
+
+    <div class="opt">
+      <div class="opt-head">
+        <h3>A · Thử driver có sẵn trước khi viết dòng code nào</h3>
+        <span class="pill ok">30 phút</span>
+      </div>
+      <p><a href="https://github.com/shueber/Touch-Up">Touch-Up</a> — MIT, Objective-C/Swift, còn active (commit tháng 6/2026, 177★). Là driver user-level đọc HID digitizer rồi inject sự kiện chuột. Có sẵn tap-to-click, drag, flick-to-scroll, pinch-to-zoom, <b>two-finger secondary click</b>, và bản 1.1 đã thêm quản lý nhiều digitizer độc lập. Chỉ cần quyền Accessibility, có bản notarized.</p>
+      <div class="cols">
+        <ul><li class="plus">Nếu chạy được là xong 90% yêu cầu 1 và 2, miễn phí</li><li class="plus">Có <code>TouchUpCore</code> framework để lấy dữ liệu multitouch thô</li></ul>
+        <ul><li class="minus">Không giải quyết bàn phím ảo và "con trỏ về màn chính"</li><li class="minus">Chưa rõ nó có gửi feature report bật multitouch cho chip SiS không</li></ul>
+      </div>
+      <p><b>Việc cần làm:</b> cài, cấp quyền, chạm thử. Kể cả khi bạn quyết định tự viết, đây vẫn là bài kiểm tra 30 phút chứng minh hướng user-space hoạt động trên đúng phần cứng này.</p>
+    </div>
+
+    <div class="opt pick">
+      <div class="opt-head">
+        <h3>B · Tự viết, chép logic từ TouchscreenDriver</h3>
+        <span class="pill accent">Khuyến nghị</span>
+      </div>
+      <p><a href="https://github.com/ymlaine/TouchscreenDriver">ymlaine/TouchscreenDriver</a> — Swift, gọn, và là bản tham chiếu <em>đúng chính xác</em> pipeline bạn cần. Nó viết cho màn Corsair Xeneon Edge nhưng kiến trúc thì trùng khít: <code>IOHIDManager</code> bắt sự kiện ở <b>chế độ exclusive</b> để diệt cú click ma tại con trỏ, map dải logical thô sang <code>CGDisplayBounds</code> của đúng màn hình (kể cả HiDPI và khi đổi độ phân giải), bắn click bằng <code>CGEventPost</code> ở toạ độ tuyệt đối, rồi <b>trả con trỏ về vị trí cũ sau mỗi lần chạm</b>.</p>
+      <div class="cols">
+        <ul><li class="plus">Yêu cầu #4 (con trỏ về màn chính) đã có sẵn mã mẫu</li><li class="plus">Swift thuần, user-space, không kext, không tắt SIP</li><li class="plus">Bạn kiểm soát hoàn toàn state machine cử chỉ và bàn phím</li></ul>
+        <ul><li class="minus">Repo mới 6★, chỉ làm tap — drag/scroll/long-press bạn tự viết</li><li class="minus">Hard-code VID/PID và dải toạ độ của máy nó, phải sửa</li></ul>
+      </div>
+      <p><b>Vì sao chọn:</b> khớp đúng lời bạn nói — thích tự code, không muốn ôm bug của app thương mại. Phần khó nhất (giành thiết bị + map toạ độ) đã có người giải, phần còn lại là logic thuần tuý bạn tự chủ được.</p>
+    </div>
+
+    <div class="opt">
+      <div class="opt-head">
+        <h3>C · Mua app đóng gói</h3>
+        <span class="pill warn">Tiền, không phải thời gian</span>
+      </div>
+      <p><a href="https://www.touchscreengestures.com/">Touchscreen Gestures</a> (€19.99, macOS 13+) liệt kê rõ hỗ trợ màn HID phổ thông, có tap, touch-and-hold để chuột phải, drag, momentum scroll, zoom, tối đa 8 màn, <b>con trỏ trả về vị trí cũ sau khi chạm</b> và có cấu hình map theo từng màn. <a href="https://www.touch-base.com/drivers.html">UPDD của Touch-Base</a> là bản thương mại lâu đời nhất, V7 là universal binary chạy native Apple Silicon, phủ cả thiết bị serial và non-HID.</p>
+      <div class="cols">
+        <ul><li class="plus">Không phải bảo trì gì</li><li class="plus">UPDD có công cụ calibrate nhiều màn trưởng thành</li></ul>
+        <ul><li class="minus">Vẫn không có bàn phím ảo trên màn phụ</li><li class="minus">Touch-Base tự thừa nhận vài panel bị "stall" trên macOS ≥ 10.15</li><li class="minus">Hộp đen — gặp bug là chờ hãng</li></ul>
+      </div>
+    </div>
+
+    <div class="opt">
+      <div class="opt-head">
+        <h3>D · Viết DriverKit DEXT</h3>
+        <span class="pill no">Đừng</span>
+      </div>
+      <p>Về lý thuyết đây là chỗ "đúng" để cắm một driver digitizer. Thực tế thì <code>com.apple.developer.driverkit</code> và cặp entitlement HID (<code>…driverkit.transport.hid</code>, <code>…driverkit.family.hid.eventservice</code>) đều là <b>restricted entitlement phải xin Apple duyệt</b>, và thread 768586 cho thấy ngay cả khi có DEXT thì <code>dispatchDigitizerTouchEvent</code> vẫn không tạo ra sự kiện nào. Bỏ nhiều công hơn để nhận ít khả năng hơn.</p>
+    </div>
+
+  </div>
+</section>
+
+<section>
+  <h4>Kiến trúc phương án B</h4>
+  <h2>Sáu module, mỗi cái giải đúng một yêu cầu</h2>
+
+  <h3>1 · Giành thiết bị và bật chế độ multitouch</h3>
+  <p>Mở thiết bị với cờ seize để macOS ngừng xử lý mặc định — đây là thứ diệt cú click ma tại con trỏ. Sau đó gửi feature report 0x07 để chuyển chip sang chế độ digitizer đa điểm, đúng như Windows vẫn làm.</p>
+<pre><code><span class="c">// Seize: macOS thôi không sinh sự kiện chuột từ thiết bị này nữa</span>
+IOHIDDeviceOpen(dev, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
+
+<span class="c">// InputMode = 2 (multitouch), DeviceIndex = 0. Thử 2, fallback 3 rồi 0.</span>
+var feature: [UInt8] = [0x02, 0x00]
+IOHIDDeviceSetReport(dev, kIOHIDReportTypeFeature, 7, &feature, feature.count)</code></pre>
+
+  <h3>2 · Đọc và bóc tách report 0x91</h3>
+  <p>Callback trả về buffer đã <b>cắt bỏ byte report ID</b>. Mỗi ngón đúng 10 byte, little-endian.</p>
+<pre><code>for i in 0..&lt;5 {
+  let o = i * 10
+  let tip        = report[o] &amp; 0x01 != 0        <span class="c">// đang chạm</span>
+  let confidence = report[o] &amp; 0x02 != 0        <span class="c">// không phải lòng bàn tay</span>
+  let id         = report[o + 1]
+  let x = Int(report[o+2]) | Int(report[o+3]) &lt;&lt; 8   <span class="c">// 0…4095</span>
+  let y = Int(report[o+4]) | Int(report[o+5]) &lt;&lt; 8
+  let w = Int(report[o+6]) | Int(report[o+7]) &lt;&lt; 8   <span class="c">// bề rộng vết chạm</span>
+  let h = Int(report[o+8]) | Int(report[o+9]) &lt;&lt; 8
+}
+let contactCount = Int(report[50])</code></pre>
+  <p><b>Loại bỏ lòng bàn tay</b> gần như miễn phí: bỏ qua contact có <code>confidence == false</code>, hoặc có <code>w</code>/<code>h</code> vượt ngưỡng (vết chạm to bất thường).</p>
+
+  <h3>3 · Map toạ độ sang màn hình đúng</h3>
+  <p>Công thức chuẩn hoá, với số thật của máy bạn:</p>
+<pre><code>let b = CGDisplayBounds(touchDisplayID)   <span class="c">// (-1920, 0, 1920, 1080)</span>
+let gx = b.origin.x + (CGFloat(x) / 4095.0) * b.width
+let gy = b.origin.y + (CGFloat(y) / 4095.0) * b.height
+<span class="c">// chạm giữa màn → (-960, 540) trong hệ global</span></code></pre>
+  <figure>
+    <svg class="diagram" viewBox="0 0 760 250" role="img" aria-label="Sơ đồ ánh xạ dải toạ độ 0-4095 sang hệ toạ độ global có origin âm">
+      <defs>
+        <marker id="ar" markerWidth="9" markerHeight="9" refX="8" refY="3" orient="auto">
+          <path d="M0,0 L8,3 L0,6 Z" fill="currentColor"/>
+        </marker>
+      </defs>
+      <g fill="none" stroke="currentColor" opacity="0.28" stroke-width="1">
+        <rect x="30" y="60" width="200" height="112"/>
+        <rect x="330" y="52" width="180" height="101"/>
+        <rect x="510" y="30" width="220" height="124"/>
+      </g>
+      <g font-family="SF Mono, ui-monospace, Menlo, monospace" font-size="11" fill="currentColor">
+        <text x="30" y="50" opacity="0.6">HID digitizer</text>
+        <text x="38" y="88" font-size="12">(0, 0)</text>
+        <text x="150" y="160" font-size="12">(4095, 4095)</text>
+        <text x="330" y="42" opacity="0.6">Màn cảm ứng · ID 2</text>
+        <text x="338" y="80" font-size="12">(−1920, 0)</text>
+        <text x="510" y="20" opacity="0.6">Màn chính · ID 5</text>
+        <text x="518" y="48" font-size="12">(0, 0)</text>
+        <text x="640" y="146" font-size="12">(2560, 1440)</text>
+      </g>
+      <g stroke="currentColor" stroke-width="1.4" opacity="0.75" marker-end="url(#ar)" fill="none">
+        <path d="M240,116 L318,110"/>
+      </g>
+      <text x="243" y="105" font-family="SF Mono, ui-monospace, Menlo, monospace" font-size="10" fill="currentColor" opacity="0.7">chuẩn hoá</text>
+      <line x1="330" y1="185" x2="730" y2="185" stroke="currentColor" opacity="0.3" stroke-width="1"/>
+      <text x="330" y="205" font-family="SF Mono, ui-monospace, Menlo, monospace" font-size="11" fill="currentColor" opacity="0.6">một hệ toạ độ global liên tục, gốc nằm ở góc màn chính</text>
+    </svg>
+    <figcaption>Toạ độ HID luôn là 0…4095 bất kể độ phân giải. Chỉ có <code>CGDisplayBounds</code> mới biết màn cảm ứng đang nằm ở đâu — và ở máy bạn nó nằm ở phía X âm.</figcaption>
+  </figure>
+
+  <div class="note bad">
+    <h4>Đừng nhận diện màn hình theo thương hiệu</h4>
+    <p>Cách làm phổ biến là dò <code>CGDisplayVendorNumber</code> rồi khớp với hãng của thiết bị USB. Ở máy bạn cách đó <b>sai</b>: vendor code của màn <em>chính</em> giải ra "VSC" — chính là ViewSonic — còn màn cảm ứng ra "VSP". Khớp theo brand sẽ chọn nhầm sang màn chính. Hãy khớp theo bộ ba ổn định <code>vendor 23152 / model 342 / serial 16777216</code>, hoặc tốt hơn là cho người dùng chạm một phát để chỉ định màn.</p>
+  </div>
+
+  <h3>4 · State machine cử chỉ</h3>
+  <p>Đây là phần bạn tự viết, và cũng là phần quyết định cảm giác dùng. Mô hình theo lối trackpad để khỏi phải đoán:</p>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Đầu vào</th><th>Điều kiện</th><th>Kết quả</th></tr></thead>
+      <tbody>
+        <tr><td>1 ngón chạm rồi nhả</td><td class="num">&lt; 300 ms, di chuyển &lt; ~10 đơn vị</td><td>Click trái tại điểm chạm</td></tr>
+        <tr><td>1 ngón giữ yên</td><td class="num">&gt; 600 ms, không di chuyển</td><td>Click phải tại điểm chạm</td></tr>
+        <tr><td>1 ngón kéo</td><td>Vượt ngưỡng di chuyển</td><td><code>LeftMouseDown</code> → <code>Dragged</code> → <code>Up</code></td></tr>
+        <tr><td>2 ngón kéo</td><td>Theo trọng tâm hai điểm</td><td>Scroll pixel, cả dọc lẫn ngang</td></tr>
+        <tr><td>2 ngón chạm rồi nhả</td><td class="num">&lt; 300 ms, không di chuyển</td><td>Click phải</td></tr>
+      </tbody>
+    </table>
+  </div>
+  <p>Tách bạch <b>1 ngón kéo = bôi chọn</b> và <b>2 ngón kéo = cuộn</b> giúp bạn không phải phân biệt drag với scroll bằng heuristic mong manh, và đúng phản xạ cơ bắp mà macOS đã dạy người dùng.</p>
+
+  <h3>5 · Cuộn hai chiều</h3>
+<pre><code>let e = CGEvent(scrollWheelEvent2Source: src,
+                units: .pixel,      <span class="c">// pixel, không phải line → mượt</span>
+                wheelCount: 2,
+                wheel1: Int32(dy),  <span class="c">// dọc</span>
+                wheel2: Int32(dx),  <span class="c">// ngang</span>
+                wheel3: 0)
+e?.post(tap: .cgSessionEventTap)</code></pre>
+  <p>Muốn có quán tính kiểu trackpad thì phải set các trường phase (<code>kCGScrollWheelEventScrollPhase</code>, momentum phase). Đây là vùng bán-công khai, số hiệu trường phải tra cứu và có thể đổi giữa các bản macOS. <b>Khuyên:</b> bản đầu tiên bỏ qua momentum, cuộn 1:1 theo ngón. Thêm sau khi mọi thứ khác đã chạy.</p>
+
+  <h3>6 · Trả con trỏ về màn chính mà không phá chuột thật</h3>
+  <p>Đây là chỗ hai yêu cầu cuối gặp nhau, và cũng là chỗ dễ hỏng nhất. Ba việc phải làm cùng lúc:</p>
+<pre><code><span class="c">// (a) Đóng dấu mọi sự kiện mình tạo ra, để phân biệt với chuột thật</span>
+let src = CGEventSource(stateID: .privateState)!
+src.userData = 0x5A17C4                       <span class="c">// mã nhận dạng riêng</span>
+src.localEventsSuppressionInterval = 0        <span class="c">// BẮT BUỘC — xem ghi chú</span>
+
+<span class="c">// (b) Nghe chuột thật ở chế độ chỉ-quan-sát, không sửa gì</span>
+<span class="c">//     tap listenOnly + lọc theo userData → biết user có đang cầm chuột không</span>
+let isMine = event.getIntegerValueField(.eventSourceUserData) == 0x5A17C4
+
+<span class="c">// (c) Hết chạm + im lặng ~500ms + chuột thật không động → mới trả con trỏ</span>
+CGWarpMouseCursorPosition(CGPoint(x: mainBounds.midX, y: mainBounds.midY))
+CGAssociateMouseAndMouseCursorPosition(1)</code></pre>
+
+  <div class="note">
+    <h4>Cái bẫy làm hỏng chuột thật</h4>
+    <p><code>CGWarpMouseCursorPosition</code> mặc định <b>chặn sự kiện chuột vật lý trong 0,25 giây</b> sau mỗi lần warp. Nếu bạn warp con trỏ sau mỗi cú chạm mà quên đặt <code>localEventsSuppressionInterval = 0</code>, người dùng sẽ thấy chuột thật bị "khựng" liên tục — vi phạm đúng yêu cầu số 5 của bạn. Đặt về 0 và luôn gọi <code>CGAssociateMouseAndMouseCursorPosition(1)</code> để nối lại chuột với con trỏ.</p>
+  </div>
+  <p>Điều kiện (c) là thứ giữ cho hai luồng nhập không giẫm chân nhau: chỉ trả con trỏ khi phiên chạm đã kết thúc <em>và</em> người dùng không đang điều khiển chuột. Vì bạn đã seize thiết bị cảm ứng, chuột và bàn phím thật đi theo đường hoàn toàn riêng — bạn không cắm vào luồng của chúng, chỉ quan sát.</p>
+</section>
+
+<section>
+  <h4>Yêu cầu #3</h4>
+  <h2>Bàn phím ảo, và vì sao phải tự viết</h2>
+
+  <p>Phản xạ đầu tiên là dùng Accessibility Keyboard có sẵn của macOS. Tôi đã mổ xẻ nó trên máy này và câu trả lời dứt khoát là <b>không dùng được</b> — vì ba lý do độc lập, mỗi lý do đủ để loại:</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Điều bạn cần</th><th>Accessibility Keyboard</th></tr></thead>
+      <tbody>
+        <tr><td>Bật/tắt bằng code</td><td>Không có API công khai, không có khoá <code>defaults</code>. Nó là process <code>LSBackgroundOnly</code> (<code>Assistive Control.app</code>) điều khiển bởi daemon accessibility. Cách duy nhất từng chạy được là GUI-scripting System Settings, và <a href="https://gist.github.com/sidneys/0063043cfdb5f452fd8d3f275de2dac2">script đó đã hỏng từ Catalina</a>, mô hình pane-id lại bị thay hẳn từ Ventura.</td></tr>
+        <tr><td>Ghim vào màn hình cụ thể</td><td>Binary <em>có</em> các lớp nội bộ <code>AssistiveControlPanelWindowMultiMonitor</code>, nhưng không hề lộ ra bề mặt điều khiển nào. Đặt <code>AXPosition</code> lên cửa sổ của process Apple này không khả thi.</td></tr>
+        <tr><td>Tự hiện khi focus vào ô nhập</td><td>Không tồn tại. Nó là panel nổi bật/tắt thủ công, không có cơ chế kích hoạt theo focus.</td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <p>May mắn là tự viết không khó, và <a href="https://github.com/secondtruth/open-osk">secondtruth/open-osk</a> (MIT, Swift/AppKit, cập nhật 07/2026) đã làm gần đúng phần lõi: panel không-giành-focus cộng bơm sự kiện CGEvent có cả giải mã keycode thật lẫn Unicode. Không repo nào làm đủ cả ba việc bạn cần, nên kế hoạch là ghép tầng panel của open-osk với tầng chọn màn hình và tầng theo dõi focus tự viết.</p>
+
+  <h3>Panel không cướp focus</h3>
+  <p>Đây là toàn bộ bí quyết. Nếu panel giành focus, con trỏ nhấp nháy trong ô nhập của app đích sẽ biến mất và phím bạn gửi đi đâu mất.</p>
+<pre><code>final class KeyboardPanel: NSPanel {
+  override var canBecomeKey: Bool { false }   <span class="c">// không bao giờ nhận focus bàn phím</span>
+  override var canBecomeMain: Bool { false }
+}
+
+let panel = KeyboardPanel(contentRect: rect,
+    styleMask: [.nonactivatingPanel, .borderless, .fullSizeContentView],
+    backing: .buffered, defer: false)
+panel.isFloatingPanel   = true
+panel.level             = .floating
+panel.hidesOnDeactivate = false        <span class="c">// BẮT BUỘC — panel mặc định tự ẩn</span>
+panel.worksWhenModal    = true
+panel.collectionBehavior = [.canJoinAllSpaces, .stationary,
+                            .ignoresCycle, .fullScreenAuxiliary]
+panel.orderFrontRegardless()           <span class="c">// KHÔNG dùng makeKeyAndOrderFront</span></code></pre>
+
+  <div class="note">
+    <h4>Lỗi AppKit sẽ ngốn của bạn nửa ngày</h4>
+    <p><code>.nonactivatingPanel</code> có một cờ tương ứng phía WindowServer (<code>kCGSPreventsActivationTagBit</code>) mà <code>setStyleMask:</code> <b>không đồng bộ lại</b>. Nghĩa là gán style mask sau khi khởi tạo sẽ trông như thành công nhưng panel vẫn cướp focus. Luôn đặt <code>.nonactivatingPanel</code> <b>ngay trong initializer</b> và đừng bao giờ sửa <code>styleMask</code> sau đó. Bản tái hiện lỗi: <a href="https://github.com/philptr/NonactivatingPanelBug">philptr/NonactivatingPanelBug</a>.</p>
+  </div>
+
+  <p>Đặt <code>LSUIElement = true</code> trong Info.plist để app không có icon Dock. Chọn màn hình bằng cách khớp <code>NSScreen</code> qua display ID, và <b>đừng dùng <code>NSScreen.main</code></b> — nó trả về màn của cửa sổ đang key, không phải màn chính:</p>
+<pre><code>extension NSScreen {
+  var displayID: CGDirectDisplayID? {
+    deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? CGDirectDisplayID
+  }
+}
+let target = NSScreen.screens.first { $0.displayID == touchDisplayID }</code></pre>
+  <p>Đăng ký <code>didChangeScreenParametersNotification</code> để đặt lại vị trí khi cắm/rút hoặc đổi độ phân giải. Lưu ý <code>CGDirectDisplayID</code> <b>không ổn định</b> qua reboot/replug — nhận diện lâu dài phải dựa vào vendor/model/serial.</p>
+
+  <h3>Gửi phím tới app đang focus</h3>
+<pre><code>let src = CGEventSource(stateID: .hidSystemState)
+
+<span class="c">// (a) phím thật — app nào cũng hiểu, kể cả Terminal</span>
+let down = CGEvent(keyboardEventSource: src, virtualKey: keycode, keyDown: true)!
+down.flags = [.maskShift]
+down.post(tap: .cghidEventTap)
+
+<span class="c">// (b) ký tự Unicode bất kỳ — tiếng Việt có dấu, emoji</span>
+let e = CGEvent(keyboardEventSource: src, virtualKey: 0, keyDown: true)!
+var chars = Array("ế".utf16)
+e.keyboardSetUnicodeString(stringLength: chars.count, unicodeString: &amp;chars)
+e.post(tap: .cghidEventTap)</code></pre>
+  <p>App đích vẫn nhận phím vì app của bạn <em>không bao giờ</em> active — nó vẫn là <code>frontmostApplication</code> và vẫn giữ focus, còn <code>.cghidEventTap</code> thì bơm vào đúng chỗ sự kiện HID đi vào WindowServer.</p>
+
+  <div class="note">
+    <h4>Đường (b) không đủ cho tiếng Việt</h4>
+    <p>Các app đọc thẳng virtual keycode — Terminal, iTerm, game, một số đường nhập của Electron/Chromium, và <b>các ô có IME</b> — sẽ bỏ qua payload Unicode khi keycode bằng 0. Cách làm chắc chắn là ánh xạ ngược ký tự về cặp (keycode, modifier) theo <em>layout bàn phím hiện tại</em> bằng <code>TISCopyCurrentKeyboardLayoutInputSource</code> + <code>UCKeyTranslate</code>, chỉ rơi về payload Unicode cho ký tự không có trên layout. Quicksilver đã làm đúng việc này trong <a href="https://github.com/quicksilver/Quicksilver/pull/1827">PR #1827</a>.</p>
+    <p>Với tiếng Việt, cân nhắc để bộ gõ của bạn (Telex/VNI) làm việc bình thường: gửi phím thật theo layout rồi để IME hệ thống bỏ dấu, thay vì tự gửi ký tự đã có dấu.</p>
+  </div>
+
+  <h3>Tự hiện khi chạm vào ô nhập</h3>
+  <p>Mẫu chuẩn là quan sát Accessibility API. Điểm bẫy: observer <b>phải tạo theo từng PID</b> — đăng ký lên system-wide element sẽ trả về <code>kAXErrorInvalidUIElement</code> (đây chính là <a href="https://github.com/tmandry/AXSwift/issues/9">AXSwift issue #9</a>, vẫn đang mở).</p>
+<pre><code><span class="c">// 1. Mỗi lần đổi app → dựng lại observer cho PID mới</span>
+NSWorkspace.shared.notificationCenter.addObserver(
+    forName: NSWorkspace.didActivateApplicationNotification, ...)
+
+<span class="c">// 2. Observer theo PID</span>
+let app = AXUIElementCreateApplication(pid)
+AXObserverCreate(pid, callback, &amp;obs)
+AXObserverAddNotification(obs!, app, kAXFocusedUIElementChangedNotification as CFString, ctx)
+
+<span class="c">// 3. Phân loại phần tử đang focus</span>
+AXUIElementCopyAttributeValue(el, kAXRoleAttribute as CFString, &amp;role)
+<span class="c">//   kAXTextFieldRole / kAXTextAreaRole / kAXComboBoxRole → hiện bàn phím</span></code></pre>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>App loại này</th><th>Vấn đề</th><th>Xử lý</th></tr></thead>
+      <tbody>
+        <tr><td>Electron, Chrome, Firefox</td><td>Cây AX của nội dung web <b>tắt mặc định</b> để tiết kiệm hiệu năng — không bao giờ bắn notification</td><td>Bật theo từng app: <code>AXUIElementSetAttributeValue(appRef, "AXManualAccessibility", kCFBooleanTrue)</code>. Hay trả lỗi <code>-25205</code>, cần thử lại.</td></tr>
+        <tr><td>Qt, Java, Flutter, game</td><td>Không lộ <code>AXTextField</code> nào cả</td><td>Cho người dùng một nút bật bàn phím thủ công làm đường lui</td></tr>
+        <tr><td>Mọi app</td><td>Notification thường tới trước khi phần tử dựng xong</td><td>Đọc lại thuộc tính sau một nhịp trễ ngắn, retry khi gặp <code>kAXErrorCannotComplete</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note bad">
+    <h4>Đừng đụng vào AXEnhancedUserInterface</h4>
+    <p>Nhiều hướng dẫn cũ khuyên set thuộc tính này để bật cây AX. Nó dành riêng cho VoiceOver và <b>làm hỏng việc định vị cửa sổ</b> của các window manager như Rectangle/Magnet. Dùng <code>AXManualAccessibility</code>.</p>
+  </div>
+
+  <div class="note bad">
+    <h4>Ô mật khẩu: chặn cứng, không có đường vòng</h4>
+    <p>Khi Secure Input đang bật, macOS chặn cả event tap lẫn phím tổng hợp <b>trên toàn hệ thống</b> cho tới khi process bật nó thoát ra. Bàn phím ảo của bạn sẽ "gõ mà không ra chữ" trong ô mật khẩu. Đây là thiết kế bảo mật có chủ đích, không phải bug và không có cách vượt qua hợp lệ.</p>
+    <p>Việc đúng cần làm là <em>phát hiện và nói rõ</em> thay vì im lặng nuốt phím: gọi <code>IsSecureEventInputEnabled()</code> (Carbon/HIToolbox, poll mỗi 0,5–1 giây khi panel hiện), kết hợp với kiểm tra <code>AXSubrole == kAXSecureTextFieldSubrole</code> để biết trước ô đang focus là ô mật khẩu. Làm mờ bàn phím và hiện dòng chữ "Ô mật khẩu — dùng bàn phím thật".</p>
+  </div>
+
+  <p><b>Quyền:</b> phần bàn phím cần Accessibility (cho AX API) và Post Event (<code>CGRequestPostEventAccess()</code>, hẹp hơn Accessibility và tương thích sandbox). Nó <em>không</em> cần Input Monitoring — quyền đó chỉ dành cho tầng đọc HID ở trên. Nhưng vì tầng AX không hoạt động trong sandbox, app phải xuất xưởng <b>không sandbox</b>, ký Developer ID và notarize, tức là không đi qua Mac App Store được.</p>
+</section>
+
+<section>
+  <h4>Quyền hạn</h4>
+  <h2>Cần gì, và cái đã kiểm chứng trên máy bạn</h2>
+  <p>Tôi đã biên dịch và chạy thử một công cụ chẩn đoán nhỏ để xác nhận đường đi này. Kết quả:</p>
+<pre><code>$ ./hiddump
+IOHIDManagerOpen -> 0xe00002e2       <span class="c">// kIOReturnNotPermitted</span></code></pre>
+  <p>Đây là kết quả <em>mong đợi</em>, không phải lỗi: Terminal chưa được cấp Input Monitoring. Nó xác nhận đúng bộ quyền cần thiết, và cả hai đều là TCC — <b>không cần tắt SIP, không cần kext</b>.</p>
+
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Quyền</th><th>Để làm gì</th><th>API kiểm tra / xin</th></tr></thead>
+      <tbody>
+        <tr><td><b>Input Monitoring</b></td><td>Mở và seize thiết bị HID</td><td><code>IOHIDCheckAccess</code> / <code>IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)</code></td></tr>
+        <tr><td><b>Accessibility</b></td><td>Bắn sự kiện chuột/phím, đọc focus qua AX API</td><td><code>AXIsProcessTrustedWithOptions</code></td></tr>
+      </tbody>
+    </table>
+  </div>
+
+  <div class="note">
+    <h4>Ký mã nguồn ngay từ đầu, đừng để sau</h4>
+    <p>TCC ghi nhớ quyền theo chữ ký của binary. Một binary chưa ký sẽ bị <b>hỏi lại quyền sau mỗi lần build</b> — cực kỳ khó chịu khi đang phát triển. Đóng gói thành <code>.app</code> với bundle ID cố định và ký ad-hoc (<code>codesign --sign -</code>) ngay từ commit đầu tiên thì quyền sẽ bám qua các lần build.</p>
+  </div>
+</section>
+
+<section>
+  <h4>Rủi ro đã biết</h4>
+  <h2>Những chỗ sẽ mất thời gian</h2>
+  <div class="tablewrap">
+    <table>
+      <thead><tr><th>Vấn đề</th><th>Vì sao đau</th><th>Xử lý</th></tr></thead>
+      <tbody>
+        <tr><td>Chrome đang giữ thiết bị</td><td>IORegistry cho thấy Chrome đang mở một user client trên chính thiết bị USB này — có thể xung đột khi bạn seize</td><td>Đóng Chrome khi test bước đầu; nếu tái hiện, kiểm tra tab nào dùng WebHID</td></tr>
+        <tr><td>Seize có thể cần quyền cao</td><td>Một số thiết bị chỉ cho seize khi chạy dưới quyền root</td><td>Nếu seize thất bại: không seize, thay vào đó bỏ qua report 0x03 và chấp nhận cú click ma, rồi bù bằng cách warp con trỏ trước khi nó tới</td></tr>
+        <tr><td>Toạ độ NSScreen ngược chiều</td><td><code>NSScreen.frame</code> gốc ở dưới-trái, <code>CGDisplayBounds</code> và <code>CGEventPost</code> gốc ở trên-trái</td><td>Chỉ dùng <code>CGDisplayBounds</code> xuyên suốt, đừng trộn hai hệ</td></tr>
+        <tr><td>Đổi độ phân giải hoặc rút cắm</td><td>Bounds thay đổi, mapping thành sai</td><td><code>CGDisplayRegisterReconfigurationCallback</code> để tính lại; theo dõi thiết bị bằng <code>IOHIDManagerRegisterDeviceRemovalCallback</code></td></tr>
+        <tr><td>Secure Input</td><td>Ô mật khẩu bật secure input, chặn phím tổng hợp — bàn phím ảo sẽ "gõ mà không ra chữ"</td><td><code>IsSecureEventInputEnabled()</code> để phát hiện và báo cho người dùng thay vì im lặng thất bại</td></tr>
+        <tr><td>macOS đổi phiên bản</td><td>Đã có báo cáo code IOHIDManager chạy tốt trên Sonoma nhưng hỏng trên Sequoia (<a href="https://developer.apple.com/forums/thread/779582">thread 779582</a>)</td><td>Giữ tầng đọc HID mỏng và tách biệt để dễ vá; đừng chôn logic vào đó</td></tr>
+        <tr><td>Chuẩn hoá thẳng 0…4095</td><td>Vùng chạm vật lý hiếm khi trùng khít khung hình, mép màn sẽ lệch</td><td>Thêm 4 hệ số hiệu chỉnh vào công thức map; calibrate bằng cách chạm 4 góc</td></tr>
+      </tbody>
+    </table>
+  </div>
+</section>
+
+<section>
+  <h4>Lộ trình</h4>
+  <h2>Thứ tự làm, mỗi bước tự kiểm chứng được</h2>
+  <p>Mỗi giai đoạn kết thúc bằng một thứ quan sát được, nên bạn không bao giờ debug hai điều chưa biết cùng lúc.</p>
+
+  <div class="phases">
+    <div class="phase">
+      <div class="phase-n">00</div>
+      <div class="phase-body">
+        <strong>Xác nhận thiết bị gửi report nào</strong>
+        <p>Cấp Input Monitoring cho Terminal, chạy <code>hiddump</code> đã có sẵn trong <code>~/Projects/Personal/touchbridge/</code>, chạm màn. Bạn sẽ thấy report ID thực tế đang tới — 0x91 hay 0x03. Câu trả lời quyết định bạn có cần gửi feature report bật multitouch hay không. Đây là 15 phút loại bỏ mọi phỏng đoán còn lại.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">01</div>
+      <div class="phase-body">
+        <strong>Seize và in toạ độ</strong>
+        <p>Mở với cờ seize, bóc report, in <code>x, y, tip</code>. Xác nhận cú click ma đã biến mất và các con số chạy đúng 0…4095 khi bạn rê ngón qua màn.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">02</div>
+      <div class="phase-body">
+        <strong>Một cú click trái đúng chỗ</strong>
+        <p>Map toạ độ, bắn <code>LeftMouseDown</code>/<code>Up</code>. Đây là khoảnh khắc yêu cầu số 1 hoàn thành và toàn bộ kiến trúc được chứng minh.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">03</div>
+      <div class="phase-body">
+        <strong>State machine: giữ lâu, kéo, chuột phải</strong>
+        <p>Thêm bộ đếm thời gian và ngưỡng di chuyển. Chưa động tới nhiều ngón.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">04</div>
+      <div class="phase-body">
+        <strong>Cuộn hai ngón</strong>
+        <p>Theo dõi trọng tâm hai contact, phát <code>scrollWheelEvent2</code> theo pixel. Yêu cầu số 2 xong.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">05</div>
+      <div class="phase-body">
+        <strong>Trả con trỏ và bảo vệ chuột thật</strong>
+        <p>Đóng dấu event source, tap chỉ-quan-sát để biết chuột thật có đang hoạt động, warp về màn chính sau khoảng lặng. Yêu cầu 4 và 5 xong.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">06</div>
+      <div class="phase-body">
+        <strong>Bàn phím ảo trên màn cảm ứng</strong>
+        <p>Phần độc lập nhất, không phụ thuộc gì vào tầng HID — bạn có thể làm song song hoặc giao cho một buổi khác. Dựng panel không-giành-focus trước, gán cứng vào màn cảm ứng, gõ thử bằng chuột. Chỉ khi đã gõ được mới nối tầng AX để tự hiện.</p>
+      </div>
+    </div>
+    <div class="phase">
+      <div class="phase-n">07</div>
+      <div class="phase-body">
+        <strong>Đóng gói</strong>
+        <p><code>.app</code> với bundle ID cố định, ký ad-hoc, LaunchAgent để tự chạy khi đăng nhập, biểu tượng thanh menu để bật/tắt nhanh.</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <h4>Nguồn</h4>
+  <h2>Tài liệu và mã nguồn còn sống</h2>
+  <ul>
+    <li><a href="https://github.com/shueber/Touch-Up">shueber/Touch-Up</a> — MIT, cập nhật 06/2026. Driver hoàn chỉnh nhất, thử trước tiên.</li>
+    <li><a href="https://github.com/ymlaine/TouchscreenDriver">ymlaine/TouchscreenDriver</a> — Swift. Bản tham chiếu cho seize + map toạ độ tuyệt đối + trả con trỏ.</li>
+    <li><a href="https://github.com/astarasikov/osxhidtouch">astarasikov/osxhidtouch</a> — 2013, đã ngưng. Vẫn hữu ích để đọc mẫu <code>CGEventCreateMouseEvent</code> + <code>CGEventPost(kCGHIDEventTap, …)</code>. Hai fork <a href="https://github.com/kyewei/osxhidtouch">kyewei</a> và <a href="https://github.com/daniel5151/osxhidtouch">daniel5151</a> (GPL-3.0) thêm drag nhưng phần đa điểm tác giả tự ghi là chưa chạy đúng.</li>
+    <li><a href="https://developer.apple.com/forums/thread/768586">Apple Developer Forums 768586</a> — bằng chứng macOS không dịch digitizer thành con trỏ, có kỹ sư Apple tham gia.</li>
+    <li><a href="https://developer.apple.com/forums/thread/779582">Apple Developer Forums 779582</a> — Input Monitoring hỏng khi lên Sequoia.</li>
+    <li><a href="https://developer.apple.com/documentation/iokit/1588670-iohiddeviceopen">IOHIDDeviceOpen</a> — tài liệu cờ seize.</li>
+    <li><a href="https://developer.apple.com/documentation/driverkit/requesting-entitlements-for-driverkit-development">DriverKit entitlements</a> — vì sao phương án D bị chặn.</li>
+    <li><a href="https://www.touch-base.com/drivers.html">Touch-Base UPDD</a> · <a href="https://www.touchscreengestures.com/">Touchscreen Gestures</a> — hai lựa chọn thương mại.</li>
+  </ul>
+  <h4 style="margin-top:14px">Riêng cho bàn phím ảo</h4>
+  <ul>
+    <li><a href="https://github.com/secondtruth/open-osk">secondtruth/open-osk</a> — MIT, Swift/AppKit, 07/2026. Panel không-giành-focus + bơm CGEvent có giải mã keycode. Gần với yêu cầu của bạn nhất.</li>
+    <li><a href="https://github.com/umkasanki/ally-keyboard">umkasanki/ally-keyboard</a> — trưởng thành hơn (174 commit) nhưng <b>không ghi license</b>, chỉ nên đọc tham khảo, đừng chép code.</li>
+    <li><a href="https://github.com/mitchchn/FunWithPanels">mitchchn/FunWithPanels</a> — sân chơi tương tác thử mọi tổ hợp styleMask/collectionBehavior của NSPanel. Cách nhanh nhất để nắm chắc cấu hình panel.</li>
+    <li><a href="https://github.com/philptr/NonactivatingPanelBug">philptr/NonactivatingPanelBug</a> — bản tái hiện lỗi styleMask không đồng bộ.</li>
+    <li><a href="https://developer.apple.com/library/archive/technotes/tn2150/_index.html">Apple TN2150</a> — Secure Input, nguồn chính thức về việc phím tổng hợp bị chặn.</li>
+    <li><a href="https://github.com/quicksilver/Quicksilver/pull/1827">Quicksilver PR #1827</a> — cách ánh xạ ngược ký tự về keycode theo layout hiện tại.</li>
+    <li><a href="https://nshipster.com/accessibility-keyboard/">NSHipster: Accessibility Keyboard</a> — mổ xẻ định dạng panel tuỳ biến <code>.ascconfig</code>.</li>
+  </ul>
+</section>
+
+<footer>
+  <div>Phần cứng và toạ độ trong tài liệu này được đọc trực tiếp từ máy của bạn ngày 14/08/2026 — không phải giá trị mẫu.</div>
+  <div>Công cụ chẩn đoán: <code>~/Projects/Personal/touchbridge/hiddump.swift</code></div>
+</footer>
+
+</div>
