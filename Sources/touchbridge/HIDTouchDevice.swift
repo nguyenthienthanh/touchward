@@ -26,8 +26,12 @@ final class HIDTouchDevice {
 
     private let identity: Identity
     private var manager: IOHIDManager?
-    private var buffers: [UnsafeMutablePointer<UInt8>] = []
+    private var devices: [IOHIDDevice] = []
+    private var buffers: [(pointer: UnsafeMutablePointer<UInt8>, capacity: Int)] = []
     private var onReport: ((UInt8, [UInt8], TimeInterval) -> Void)?
+    /// Called when the panel is unplugged, so the caller can release a held button rather
+    /// than leave one pressed for the rest of the login session.
+    var onDisconnect: (() -> Void)?
 
     /// False when the device could not be seized. Callers should then expect macOS to
     /// keep producing its own phantom clicks.
@@ -59,6 +63,11 @@ final class HIDTouchDevice {
             return .failure(.deviceNotFound)
         }
 
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, _ in
+            guard let context else { return }
+            Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue().onDisconnect?()
+        }, Unmanaged.passUnretained(self).toOpaque())
+
         for device in devices {
             attach(device)
         }
@@ -78,9 +87,13 @@ final class HIDTouchDevice {
 
         switchToMultitouch(device)
 
-        let capacity = (IOHIDDeviceGetProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as? Int) ?? 64
+        // Never trust the reported size alone: IOKit writes `length` bytes into whatever
+        // we hand it, and a missing property would otherwise size the buffer by guess.
+        let reported = (IOHIDDeviceGetProperty(device, kIOHIDMaxInputReportSizeKey as CFString) as? Int) ?? 0
+        let capacity = max(reported, 128)
         let buffer = UnsafeMutablePointer<UInt8>.allocate(capacity: capacity)
-        buffers.append(buffer)
+        buffers.append((buffer, capacity))
+        devices.append(device)
 
         IOHIDDeviceRegisterInputReportCallback(
             device, buffer, capacity,
@@ -96,15 +109,50 @@ final class HIDTouchDevice {
         IOHIDDeviceScheduleWithRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
     }
 
-    /// Best-effort: try the standard multitouch value, then the alternate. A device that
-    /// is already in digitizer mode ignores this harmlessly.
-    private func switchToMultitouch(_ device: IOHIDDevice) {
+    /// Best-effort: try the standard multitouch value, then the alternate, and try each
+    /// both with and without a leading report-ID byte — macOS is inconsistent about
+    /// whether SetReport expects one for numbered reports. A device already in digitizer
+    /// mode ignores all of it harmlessly.
+    @discardableResult
+    private func switchToMultitouch(_ device: IOHIDDevice) -> Bool {
         for value in [InputMode.multitouch, InputMode.alternate] {
-            var payload: [UInt8] = [value, 0x00]  // InputMode, DeviceIndex
-            let result = IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature,
-                                              CFIndex(InputMode.reportID), &payload, payload.count)
-            if result == kIOReturnSuccess { return }
+            let payloads: [[UInt8]] = [
+                [value, 0x00],                      // InputMode, DeviceIndex
+                [InputMode.reportID, value, 0x00],  // with the report ID prefixed
+            ]
+            for var payload in payloads {
+                let result = IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature,
+                                                  CFIndex(InputMode.reportID), &payload, payload.count)
+                if result == kIOReturnSuccess {
+                    inputModeSet = true
+                    return true
+                }
+            }
         }
+        return false
+    }
+
+    /// False means the panel may still be in its mouse-compatibility mode, which reports a
+    /// single contact and no gestures.
+    private(set) var inputModeSet = false
+
+    /// Unschedules, closes and frees everything. Safe to call twice.
+    func stop() {
+        // Unregister against the same buffer the callback was registered with, then free
+        // it — IOKit must not be left holding a pointer we are about to release.
+        for (device, entry) in zip(devices, buffers) {
+            IOHIDDeviceRegisterInputReportCallback(device, entry.pointer, entry.capacity, nil, nil)
+            IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.defaultMode.rawValue)
+            IOHIDDeviceClose(device, IOOptionBits(kIOHIDOptionsTypeNone))
+            entry.pointer.deallocate()
+        }
+        devices.removeAll()
+        buffers.removeAll()
+
+        if let manager {
+            IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        }
+        manager = nil
     }
 
     enum StartError: Error, CustomStringConvertible {

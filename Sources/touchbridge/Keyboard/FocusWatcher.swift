@@ -73,6 +73,12 @@ final class FocusWatcher {
             return
         }
 
+        // A misbehaving app can return something other than an element here. A force cast
+        // would trap and take the touch driver down with it.
+        guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
+            onChange?(Focus(isTextInput: false, isSecureField: false))
+            return
+        }
         let target = element as! AXUIElement
         let role = stringAttribute(target, kAXRoleAttribute)
         let subrole = stringAttribute(target, kAXSubroleAttribute)

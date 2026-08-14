@@ -60,7 +60,9 @@ enum DisplayRegistry {
     static func onReconfiguration(_ handler: @escaping () -> Void) {
         let box = Unmanaged.passRetained(ReconfigBox(handler)).toOpaque()
         CGDisplayRegisterReconfigurationCallback({ _, flags, userInfo in
-            // Only react once the move has actually happened.
+            // The callback fires twice per change. The first pass happens BEFORE the
+            // move, when CGDisplayBounds still reports the old geometry.
+            guard !flags.contains(.beginConfigurationFlag) else { return }
             guard flags.contains(.setModeFlag) || flags.contains(.addFlag)
                     || flags.contains(.removeFlag) || flags.contains(.desktopShapeChangedFlag)
             else { return }

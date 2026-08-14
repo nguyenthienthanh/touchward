@@ -56,26 +56,41 @@ final class EventSynthesizer {
         }
     }
 
-    /// Moves the pointer without clicking — used to park the cursor over the touch point
-    /// before a gesture resolves, so hover states track the finger.
-    func moveCursor(to point: CGPoint) {
-        post(.mouseMoved, at: point, button: .left)
-    }
-
     private func post(_ type: CGEventType, at point: CGPoint, button: CGMouseButton) {
         guard let event = CGEvent(mouseEventSource: source, mouseType: type,
                                   mouseCursorPosition: point, mouseButton: button) else { return }
         event.post(tap: .cghidEventTap)
     }
 
+    /// Scroll wheel deltas are integers, but a slow two-finger drag produces sub-pixel
+    /// movement per frame. Rounding each frame independently would floor every one of them
+    /// to zero and the page would simply not move. Carry the remainder instead.
+    private var residualX: CGFloat = 0
+    private var residualY: CGFloat = 0
+
     private func postScroll(dx: CGFloat, dy: CGFloat) {
+        residualX += dx
+        residualY += dy
+
+        let stepX = residualX.rounded(.towardZero)
+        let stepY = residualY.rounded(.towardZero)
+        guard stepX != 0 || stepY != 0 else { return }
+
+        residualX -= stepX
+        residualY -= stepY
+
         let sign: Int32 = contentFollowsFinger ? 1 : -1
         guard let event = CGEvent(scrollWheelEvent2Source: source,
                                   units: .pixel,
                                   wheelCount: 2,
-                                  wheel1: sign * Int32(dy.rounded()),
-                                  wheel2: sign * Int32(dx.rounded()),
+                                  wheel1: sign * Int32(stepY),
+                                  wheel2: sign * Int32(stepX),
                                   wheel3: 0) else { return }
         event.post(tap: .cghidEventTap)
+    }
+
+    /// Belt and braces for quit paths: release the left button wherever the cursor is.
+    func releaseLeftButtonIfHeld(at point: CGPoint) {
+        post(.leftMouseUp, at: point, button: .left)
     }
 }

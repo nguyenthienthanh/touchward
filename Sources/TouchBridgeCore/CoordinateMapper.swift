@@ -8,11 +8,15 @@ public struct Calibration: Equatable, Sendable {
 
     public static let identity = Calibration(xMin: 0, xMax: 1, yMin: 0, yMax: 1)
 
+    /// An inverted or empty range would silently pin every touch to one edge, which reads
+    /// as "the touchscreen is broken". Fall back to the full range instead.
     public init(xMin: Double, xMax: Double, yMin: Double, yMax: Double) {
-        self.xMin = xMin
-        self.xMax = xMax
-        self.yMin = yMin
-        self.yMax = yMax
+        let xValid = xMax > xMin
+        let yValid = yMax > yMin
+        self.xMin = xValid ? xMin : 0
+        self.xMax = xValid ? xMax : 1
+        self.yMin = yValid ? yMin : 0
+        self.yMax = yValid ? yMax : 1
     }
 }
 

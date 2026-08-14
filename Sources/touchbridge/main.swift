@@ -44,6 +44,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var keyboardView: KeyboardView?
     private var touchDisplayID: CGDirectDisplayID?
     private var secureInputPoll: Timer?
+    private var hasShutDown = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         guard let touchDisplay = DisplayRegistry.touchDisplay(),
@@ -65,9 +66,19 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         self.pipeline = pipeline
 
+        installShutdownHandlers()
+
         if !cursorReturn.startObservingRealMouse() {
             log("⚠️  Không cài được event tap quan sát chuột thật — con trỏ vẫn sẽ trả về, "
                 + "nhưng sẽ không tránh được lúc anh đang cầm chuột.")
+        }
+
+        // Unplugging mid-drag would otherwise leave the left button logically pressed.
+        device.onDisconnect = { [weak self] in
+            DispatchQueue.main.async {
+                log("🔌 Màn cảm ứng đã rút. Nhả mọi nút đang giữ.")
+                self?.pipeline?.releaseEverything()
+            }
         }
 
         switch device.start(onReport: { [weak pipeline] id, bytes, time in
@@ -77,18 +88,62 @@ final class AppController: NSObject, NSApplicationDelegate {
             log(device.isSeized
                 ? "✅ Đã giành thiết bị cảm ứng (seize) — macOS thôi tự sinh click."
                 : "⚠️  Không seize được thiết bị; macOS có thể vẫn sinh click ma tại con trỏ.")
+            log(device.inputModeSet
+                ? "✅ Đã chuyển sang chế độ multitouch."
+                : "ℹ️  Không đổi được chế độ nhập; nếu chỉ nhận 1 điểm chạm thì panel đang ở mouse mode.")
         case .failure(let error):
             log("❌ \(error.description)")
             NSApp.terminate(nil)
             return
         }
 
+        pipeline.start()
+
         DisplayRegistry.onReconfiguration { [weak self] in
             DispatchQueue.main.async { self?.geometryChanged() }
         }
 
+        // Waking from sleep can drop the final report of whatever was in flight.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.pipeline?.releaseEverything()
+        }
+
         setUpKeyboard(on: touchDisplay)
         log("▶️  TouchBridge đang chạy. Ctrl-C để thoát.")
+    }
+
+    /// A held drag must not survive the process. Ctrl-C is the documented way to quit, and
+    /// SIGINT bypasses AppKit entirely — so both paths need the same release.
+    private func installShutdownHandlers() {
+        for signalNumber in [SIGINT, SIGTERM] {
+            signal(signalNumber, SIG_IGN)
+            let source = DispatchSource.makeSignalSource(signal: signalNumber, queue: .main)
+            source.setEventHandler { [weak self] in
+                self?.shutDown()
+                exit(0)
+            }
+            source.resume()
+            signalSources.append(source)
+        }
+    }
+
+    private var signalSources: [DispatchSourceSignal] = []
+
+    func applicationWillTerminate(_ notification: Notification) {
+        shutDown()
+    }
+
+    private func shutDown() {
+        guard !hasShutDown else { return }
+        hasShutDown = true
+
+        pipeline?.stop()          // releases any held button first
+        device.stop()
+        cursorReturn.stop()
+        stopSecureInputPolling()
+        panel?.dismiss()
     }
 
     private func geometryChanged() {

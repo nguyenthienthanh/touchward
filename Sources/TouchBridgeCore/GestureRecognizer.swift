@@ -6,6 +6,10 @@ public struct GestureConfig: Sendable {
     public var longPressDuration: TimeInterval = 0.60
     /// Movement in points beyond which a touch is a drag, not a tap.
     public var moveThreshold: CGFloat = 10
+    /// Backstop for a drag whose report stream died (unplug, sleep, dropped final report).
+    /// Deliberately generous: a change-driven controller sends nothing while a finger rests,
+    /// so a short timeout would cut legitimate slow drags short.
+    public var staleDragTimeout: TimeInterval = 2.0
 
     public init() {}
 }
@@ -13,17 +17,17 @@ public struct GestureConfig: Sendable {
 /// Trackpad-shaped state machine: one finger points and drags, two fingers scroll.
 /// Feed it mapped frames in order; it returns the events that frame produced.
 ///
-/// Splitting one-finger drag from two-finger scroll avoids having to guess a user's
-/// intent from a single contact's velocity, and matches the muscle memory macOS has
-/// already taught. Scroll deltas are raw finger displacement — the synthesizer owns
-/// scroll polarity so this type stays free of platform conventions.
+/// Splitting one-finger drag from two-finger scroll avoids guessing intent from a single
+/// contact's velocity, and matches the muscle memory macOS already teaches. Scroll deltas
+/// are raw finger displacement — the synthesizer owns polarity so this type stays free of
+/// platform conventions.
 public struct GestureRecognizer: Sendable {
     public var config: GestureConfig
 
     private enum State {
         case idle
-        case oneDown(start: CGPoint, startTime: TimeInterval)
-        case dragging(last: CGPoint)
+        case oneDown(id: UInt8, start: CGPoint, startTime: TimeInterval)
+        case dragging(id: UInt8, last: CGPoint)
         /// Right click already emitted; ignore everything until the finger lifts.
         case longPressed
         case twoDown(startTime: TimeInterval, lastCentroid: CGPoint, moved: Bool)
@@ -32,19 +36,27 @@ public struct GestureRecognizer: Sendable {
     }
 
     private var state: State = .idle
+    private var lastFrameTime: TimeInterval = 0
 
     public init(config: GestureConfig = GestureConfig()) {
         self.config = config
     }
 
+    /// True while a gesture is in flight — i.e. a pointer button may be held down.
+    public var hasActiveGesture: Bool {
+        if case .idle = state { return false }
+        return true
+    }
+
     public mutating func handle(_ frame: MappedFrame) -> [GestureEvent] {
+        lastFrameTime = frame.time
         let count = frame.contacts.count
 
         switch state {
         case .idle:
             return begin(frame, count: count)
 
-        case .oneDown(let start, let startTime):
+        case .oneDown(let id, let start, let startTime):
             if count == 0 {
                 state = .idle
                 let wasTap = frame.time - startTime <= config.tapMaxDuration
@@ -55,10 +67,15 @@ public struct GestureRecognizer: Sendable {
                 state = .twoDown(startTime: frame.time, lastCentroid: centroid(frame), moved: false)
                 return []
             }
+            guard let point = point(of: id, in: frame) else {
+                // A different finger than the one we were tracking. Continuing would
+                // charge this tap to the wrong location.
+                state = .idle
+                return [.sessionEnded]
+            }
 
-            let point = frame.contacts[0].point
             if distance(point, start) > config.moveThreshold {
-                state = .dragging(last: point)
+                state = .dragging(id: id, last: point)
                 return [.dragBegan(at: start), .dragMoved(to: point)]
             }
             if frame.time - startTime >= config.longPressDuration {
@@ -67,7 +84,7 @@ public struct GestureRecognizer: Sendable {
             }
             return []
 
-        case .dragging(let last):
+        case .dragging(let id, let last):
             if count == 0 {
                 state = .idle
                 return [.dragEnded(at: last), .sessionEnded]
@@ -76,10 +93,15 @@ public struct GestureRecognizer: Sendable {
                 state = .twoDown(startTime: frame.time, lastCentroid: centroid(frame), moved: false)
                 return [.dragEnded(at: last)]
             }
+            guard let point = point(of: id, in: frame) else {
+                // Tracked finger vanished and a different one is down: end the drag here
+                // rather than teleport it onto whatever the new finger is over.
+                state = .idle
+                return [.dragEnded(at: last), .sessionEnded]
+            }
 
-            let point = frame.contacts[0].point
             guard point != last else { return [] }
-            state = .dragging(last: point)
+            state = .dragging(id: id, last: point)
             return [.dragMoved(to: point)]
 
         case .longPressed:
@@ -115,16 +137,56 @@ public struct GestureRecognizer: Sendable {
         }
     }
 
+    /// Clock-driven half of the machine. A perfectly still finger produces no new reports
+    /// on a change-driven controller, so the long press cannot be discovered by frames
+    /// alone; and a drag whose stream died must not leave the button held forever.
+    public mutating func tick(at time: TimeInterval) -> [GestureEvent] {
+        switch state {
+        case .oneDown(_, let start, let startTime):
+            guard time - startTime >= config.longPressDuration else { return [] }
+            state = .longPressed
+            return [.rightClick(at: start)]
+
+        case .dragging(_, let last):
+            guard time - lastFrameTime > config.staleDragTimeout else { return [] }
+            state = .idle
+            return [.dragEnded(at: last), .sessionEnded]
+
+        default:
+            return []
+        }
+    }
+
+    /// Unconditionally closes out whatever is in flight. Called on quit and on device
+    /// removal so a pointer button is never left logically pressed.
+    public mutating func forceRelease() -> [GestureEvent] {
+        switch state {
+        case .idle:
+            return []
+        case .dragging(_, let last):
+            state = .idle
+            return [.dragEnded(at: last), .sessionEnded]
+        default:
+            state = .idle
+            return [.sessionEnded]
+        }
+    }
+
     private mutating func begin(_ frame: MappedFrame, count: Int) -> [GestureEvent] {
         switch count {
         case 0:
             return []
         case 1:
-            state = .oneDown(start: frame.contacts[0].point, startTime: frame.time)
+            let contact = frame.contacts[0]
+            state = .oneDown(id: contact.id, start: contact.point, startTime: frame.time)
         default:
             state = .twoDown(startTime: frame.time, lastCentroid: centroid(frame), moved: false)
         }
         return []
+    }
+
+    private func point(of id: UInt8, in frame: MappedFrame) -> CGPoint? {
+        frame.contacts.first { $0.id == id }?.point
     }
 
     private func centroid(_ frame: MappedFrame) -> CGPoint {

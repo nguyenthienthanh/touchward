@@ -16,19 +16,37 @@ final class CursorReturn {
     private var lastRealMouseActivity: TimeInterval = 0
     private var pendingWorkItem: DispatchWorkItem?
     private var tap: CFMachPort?
+    /// Set while we warp, because the warp itself generates an unmarked mouseMoved that
+    /// would otherwise be mistaken for the user grabbing the mouse.
+    private var isWarping = false
 
     /// Installs the passive observer. Listen-only: it never modifies or drops an event.
     func startObservingRealMouse() -> Bool {
+        // Dragged events matter as much as moves: a real mouse drag lasting longer than
+        // mouseGrace would otherwise look like idleness and let the cursor warp away
+        // mid-gesture.
         let mask = (1 << CGEventType.mouseMoved.rawValue)
             | (1 << CGEventType.leftMouseDown.rawValue)
             | (1 << CGEventType.rightMouseDown.rawValue)
+            | (1 << CGEventType.otherMouseDown.rawValue)
+            | (1 << CGEventType.leftMouseDragged.rawValue)
+            | (1 << CGEventType.rightMouseDragged.rawValue)
             | (1 << CGEventType.scrollWheel.rawValue)
 
-        let callback: CGEventTapCallBack = { _, _, event, refcon in
+        let callback: CGEventTapCallBack = { proxy, type, event, refcon in
             guard let refcon else { return Unmanaged.passUnretained(event) }
             let me = Unmanaged<CursorReturn>.fromOpaque(refcon).takeUnretainedValue()
 
-            if event.getIntegerValueField(.eventSourceUserData) != EventSynthesizer.marker {
+            // macOS disables a tap that is slow or when the user changes input settings.
+            // Without re-enabling, the only guard protecting the physical mouse silently
+            // dies and the cursor starts warping out from under the user's hand.
+            if type == .tapDisabledByTimeout || type == .tapDisabledByUserInput {
+                me.reEnable()
+                return Unmanaged.passUnretained(event)
+            }
+
+            if !me.isWarping,
+               event.getIntegerValueField(.eventSourceUserData) != EventSynthesizer.marker {
                 me.noteRealMouseActivity()
             }
             return Unmanaged.passUnretained(event)
@@ -50,6 +68,11 @@ final class CursorReturn {
         return true
     }
 
+    fileprivate func reEnable() {
+        guard let tap else { return }
+        CGEvent.tapEnable(tap: tap, enable: true)
+    }
+
     fileprivate func noteRealMouseActivity() {
         lastRealMouseActivity = Date().timeIntervalSinceReferenceDate
         // The user took over — abandon any return we had queued.
@@ -66,9 +89,12 @@ final class CursorReturn {
             let idleFor = Date().timeIntervalSinceReferenceDate - self.lastRealMouseActivity
             guard idleFor > self.mouseGrace else { return }
 
+            self.isWarping = true
             CGWarpMouseCursorPosition(mainDisplayCentre)
             // Re-couple the hardware mouse to the cursor after a warp.
             CGAssociateMouseAndMouseCursorPosition(1)
+            // The warp's own mouseMoved lands on the next run-loop pass.
+            DispatchQueue.main.async { self.isWarping = false }
         }
 
         pendingWorkItem = work
@@ -78,5 +104,14 @@ final class CursorReturn {
     func cancelPendingReturn() {
         pendingWorkItem?.cancel()
         pendingWorkItem = nil
+    }
+
+    func stop() {
+        cancelPendingReturn()
+        if let tap {
+            CGEvent.tapEnable(tap: tap, enable: false)
+            CFMachPortInvalidate(tap)
+        }
+        tap = nil
     }
 }

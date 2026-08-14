@@ -54,7 +54,7 @@ chỗ duy nhất quyết định chiều.
 Tách đôi có chủ đích, để phần logic kiểm chứng được mà không cần quyền hệ thống:
 
 ```
-TouchBridgeCore/          ← hàm thuần, 30 unit test, chạy `swift test` không cần TCC
+TouchBridgeCore/          ← hàm thuần, 44 unit test, chạy `swift test` không cần TCC
   HIDReportParser         báo cáo 0x91 (digitizer 5 điểm) và 0x03 (mouse dự phòng)
   CoordinateMapper        0…4095 → toạ độ global, có calibration + clamp
   GestureRecognizer       state machine kiểu trackpad
@@ -69,7 +69,7 @@ touchbridge/              ← tầng hệ thống, không unit test được
 ```
 
 ```bash
-swift test    # 30 test, không cần quyền gì
+swift test    # 44 test, không cần quyền gì
 ```
 
 ## Không đụng vào chuột và bàn phím thật
@@ -86,6 +86,14 @@ swift test    # 30 test, không cần quyền gì
 Cộng thêm `localEventsSuppressionInterval = 0`: nếu thiếu dòng này, mỗi lần trả con trỏ
 sẽ chặn chuột vật lý 0,25 giây và chuột sẽ có cảm giác bị hỏng.
 
+## An toàn khi thoát
+
+Một cú kéo đang dở mà process chết sẽ để lại nút chuột trái **kẹt ở trạng thái nhấn trên
+toàn hệ thống** — máy coi như hỏng cho tới khi anh click chuột thật. Bốn đường thoát đều
+được bịt: `SIGINT`/`SIGTERM` (Ctrl-C), `applicationWillTerminate`, rút cáp USB
+(`IOHIDManagerRegisterDeviceRemovalCallback`), và máy vào sleep. Ngoài ra state machine có
+hạn 2 giây: nếu luồng report chết giữa lúc kéo, nút được nhả tự động.
+
 ## Giới hạn đã biết
 
 - **Ô mật khẩu không gõ được bằng bàn phím ảo.** Khi Secure Input bật, macOS chặn phím
@@ -96,6 +104,13 @@ sẽ chặn chuột vật lý 0,25 giây và chuột sẽ có cảm giác bị h
 - **Chưa có calibration UI.** `Calibration` đã có trong code và có test; còn thiếu màn
   hình chạm 4 góc để sinh ra hệ số.
 - **Chưa có momentum scroll.** Cuộn hiện là 1:1 theo ngón.
+- **Tầng hệ thống chưa có test.** `EventSynthesizer`, `CursorReturn`, `HIDTouchDevice` gắn
+  cứng vào `CGEventSource`, đồng hồ và IOKit nên chưa có chỗ chèn test. Muốn kiểm chứng bất
+  biến "mọi `leftMouseDown` đều có `leftMouseUp` tương ứng" thì cần tách một protocol
+  `PointerSink` — đáng làm nếu code này sống lâu.
+- **Chưa xác minh trên phần cứng.** Toàn bộ logic được suy ra từ report descriptor đọc được,
+  chưa chạy thật vì thiếu quyền TCC. Parser đã viết để chịu được cả hai khả năng còn mơ hồ
+  (report ID có bị cắt khỏi buffer hay không, panel đang ở digitizer hay mouse mode).
 
 ## Nghiệm thu tay
 
@@ -111,3 +126,5 @@ Những thứ không tự động hoá được vì phụ thuộc phần cứng 
 - [ ] Gõ bàn phím vật lý khi bàn phím ảo đang hiện → chữ vẫn vào đúng app
 - [ ] Chạm ô tìm kiếm trong Safari → bàn phím ảo hiện trên màn cảm ứng, gõ ra chữ
 - [ ] Chạm ô mật khẩu → bàn phím ảo hiện cảnh báo thay vì gõ hụt
+- [ ] **Ctrl-C giữa lúc đang kéo → nút chuột không kẹt** (thử: kéo, giữ nguyên tay, Ctrl-C)
+- [ ] Rút cáp USB giữa lúc đang kéo → nút chuột không kẹt

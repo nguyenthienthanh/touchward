@@ -8,20 +8,48 @@ public enum ReportID {
     public static let mouse: UInt8 = 0x03
 }
 
+/// The controller declares both a digitizer and a mouse collection, and may emit both.
+/// Mixing them corrupts the gesture state machine: a mouse report carries at most one
+/// contact, so an interleaved one reads as "a finger lifted" in the middle of a scroll.
+///
+/// Rule: whichever collection first produces a real contact owns the session.
+public struct ReportStreamLatch: Sendable {
+    private var latched: UInt8?
+
+    public init() {}
+
+    public var latchedReportID: UInt8? { latched }
+
+    public mutating func accepts(reportID: UInt8, hasContacts: Bool) -> Bool {
+        if let latched {
+            return reportID == latched
+        }
+        if hasContacts {
+            latched = reportID
+        }
+        return true
+    }
+
+    public mutating func reset() {
+        latched = nil
+    }
+}
+
 public enum HIDReportParser {
     public static let maxContacts = 5
     public static let bytesPerContact = 10
-    public static let digitizerBodyLength = maxContacts * bytesPerContact + 1  // + contact count
+    public static let contactCountOffset = maxContacts * bytesPerContact  // 50
+    public static let digitizerBodyLength = contactCountOffset + 1
     public static let mouseBodyLength = 5
 
     /// Contacts wider or taller than this in raw units are a palm or forearm, not a finger.
     public static let defaultMaxContactSize = 900
 
-    /// Parses a raw input report. `bytes` must already have the report ID stripped,
-    /// which is what `IOHIDDeviceRegisterInputReportCallback` hands back.
+    /// Parses a raw input report. Returns nil for reports this driver does not own, so the
+    /// caller can ignore them without knowing the descriptor layout.
     ///
-    /// Returns nil for reports this driver does not own, so the caller can ignore them
-    /// without having to know the descriptor layout.
+    /// Tolerates the report ID still being present as byte 0: IOKit strips it for some
+    /// devices and not others, and getting that wrong shifts every field by one.
     public static func parse(
         reportID: UInt8,
         bytes: [UInt8],
@@ -30,28 +58,46 @@ public enum HIDReportParser {
     ) -> TouchFrame? {
         switch reportID {
         case ReportID.digitizer:
-            return parseDigitizer(bytes, time: time, maxContactSize: maxContactSize)
+            return parseDigitizer(stripPrefix(bytes, reportID: reportID), time: time, maxContactSize: maxContactSize)
         case ReportID.mouse:
-            return parseMouse(bytes, time: time)
+            return parseMouse(stripPrefix(bytes, reportID: reportID), time: time)
         default:
             return nil
+        }
+    }
+
+    /// The digitizer's first body byte holds only the tip and confidence bits, so any value
+    /// above 0x03 there can only be the report ID. The mouse body is a fixed 5 bytes, so an
+    /// extra leading byte is detectable by length instead — its buttons byte can legitimately
+    /// equal 0x03.
+    private static func stripPrefix(_ bytes: [UInt8], reportID: UInt8) -> [UInt8] {
+        guard let first = bytes.first, first == reportID else { return bytes }
+
+        switch reportID {
+        case ReportID.digitizer where first > 0x03:
+            return Array(bytes.dropFirst())
+        case ReportID.mouse where bytes.count > mouseBodyLength:
+            return Array(bytes.dropFirst())
+        default:
+            return bytes
         }
     }
 
     private static func parseDigitizer(_ bytes: [UInt8], time: TimeInterval, maxContactSize: Int) -> TouchFrame? {
         guard bytes.count >= digitizerBodyLength else { return nil }
 
-        var contacts: [Contact] = []
-        contacts.reserveCapacity(maxContacts)
+        // Slots past the reported count hold stale data whose tip bit is often still set.
+        let reported = Int(bytes[contactCountOffset])
+        let slots = min(max(reported, 0), maxContacts)
 
-        for slot in 0..<maxContacts {
+        var contacts: [Contact] = []
+        contacts.reserveCapacity(slots)
+
+        for slot in 0..<slots {
             let o = slot * bytesPerContact
             let flags = bytes[o]
-            let isTouching = flags & 0x01 != 0
-            let isConfident = flags & 0x02 != 0
 
-            // A clear tip switch means the slot is stale, not a finger resting at (0,0).
-            guard isTouching, isConfident else { continue }
+            guard flags & 0x01 != 0, flags & 0x02 != 0 else { continue }
 
             let width = littleEndian16(bytes, o + 6)
             let height = littleEndian16(bytes, o + 8)
