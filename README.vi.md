@@ -117,6 +117,12 @@ trên phần cứng khác — chạy được hay không — đều rất đáng
 - Đúng một màn phụ, hoặc đặt `TOUCHWARD_DISPLAY_ID`. Touchward từ chối đoán màn nào là màn
   cảm ứng khi có nhiều lựa chọn.
 
+Cứ để Touchward chạy kể cả khi không cắm gì. **Mọi hành vi cảm ứng đều tắt cho tới khi panel
+được cắm *và* đang bật màn** — màn ở chế độ chờ thường vẫn cấp điện cho cổng USB, nên bộ số
+hoá vẫn báo điểm chạm cho một màn hình không ai nhìn thấy; hành động theo đó sẽ đẩy con trỏ
+tới chỗ anh không dõi theo được. App sẽ chờ, ghi rõ trong log, và tự bật lên khi panel sẵn
+sàng.
+
 ---
 
 ## Build và chạy
@@ -175,7 +181,7 @@ bash scripts/make-dmg.sh           # Artifacts/Touchward-1.0.0.dmg
 ### Chạy test
 
 ```bash
-swift test                         # 80 test, không cần quyền gì
+swift test                         # 96 test, không cần quyền gì
 ```
 
 `TouchwardCore` là logic thuần, không IOKit không AppKit, đúng để phần parse, cử chỉ và ánh
@@ -250,7 +256,7 @@ lần được một chữ hoa, chạm đúp thì khoá hoa.
 Tách đôi có chủ đích, để phần logic kiểm chứng được mà không cần quyền hệ thống:
 
 ```
-TouchwardCore/          ← hàm thuần, 80 unit test, `swift test` không cần quyền TCC
+TouchwardCore/          ← hàm thuần, 96 unit test, `swift test` không cần quyền TCC
   TouchValueAssembler     ghép frame từ (usage, value) đã decode — không offset byte
   SlotTracker             trạng thái từng ngón cho report multitouch
   PalmFilter              ngưỡng theo dải thật của thiết bị, không theo hằng số
@@ -325,7 +331,10 @@ tail -f ~/Library/Logs/Touchward.log
 | `Mapped 5 finger slots from the descriptor` | Đã tìm và map được các collection ngón. |
 | `The panel reports 2 contacts` | Ngón thứ hai thật sự đã tới nơi. |
 | `Could not seize the device` | macOS vẫn đang điều khiển con trỏ từ panel; sẽ có click ma. |
-| `Cannot tell which display is the touchscreen` | Nhiều màn phụ quá. Đặt `TOUCHWARD_DISPLAY_ID=<id>`. |
+| `Waiting for a touchscreen` | Chưa có panel dùng được: chưa cắm, hoặc cắm rồi nhưng màn đang tắt. Mọi thứ liên quan cảm ứng đều tắt cho tới khi có. |
+| `No usable touch display` | Panel biến mất giữa chừng. Cảm ứng và bàn phím tạm ngưng; thứ đang giữ đã được nhả. |
+| `Touch display is back` | Panel trở lại, cảm ứng sống lại. |
+| Nhiều màn phụ cùng lúc | Touchward không đoán màn nào là panel. Đặt `TOUCHWARD_DISPLAY_ID=<id>`. |
 
 **Chạm mà không có gì xảy ra.** Kiểm tra Accessibility đã cấp chưa (dòng log đầu tiên nói
 rõ). Rồi kiểm tra app có đang chạy không: `pgrep -fl Touchward`.

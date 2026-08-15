@@ -1,5 +1,6 @@
 import CoreGraphics
 import Foundation
+import TouchwardCore
 
 /// Identifies a display by properties that outlive a restart or a replug.
 /// `CGDirectDisplayID` itself does not, so it is never persisted.
@@ -39,7 +40,10 @@ enum DisplayRegistry {
     static func touchDisplay() -> CGDirectDisplayID? {
         let displays = activeDisplays()
 
-        if let raw = ProcessInfo.processInfo.environment["TOUCHBRIDGE_DISPLAY_ID"],
+        // Named after the app. The old TOUCHBRIDGE_ name is still read because it was in
+        // the log message people were told to follow.
+        let environment = ProcessInfo.processInfo.environment
+        if let raw = environment["TOUCHWARD_DISPLAY_ID"] ?? environment["TOUCHBRIDGE_DISPLAY_ID"],
            let requested = UInt32(raw),
            displays.contains(requested) {
             return requested
@@ -51,6 +55,26 @@ enum DisplayRegistry {
         let externals = displays.filter { CGDisplayIsMain($0) == 0 }
         guard externals.count == 1, externals[0] != mainDisplay() else { return nil }
         return externals[0]
+    }
+
+    /// The touchscreen, but only while touching it could mean anything.
+    ///
+    /// Resolved fresh every time rather than remembered: a display ID is minted anew when a
+    /// panel is replugged, and a remembered one silently refers to a screen that no longer
+    /// exists — which is how touches kept being mapped onto a monitor that had been
+    /// switched off.
+    static func usableTouchDisplay() -> CGDirectDisplayID? {
+        guard let id = touchDisplay(), isUsable(id) else { return nil }
+        return id
+    }
+
+    static func isUsable(_ id: CGDirectDisplayID) -> Bool {
+        DisplayAvailability.isUsable(DisplayAvailability.Signals(
+            isInActiveList: activeDisplays().contains(id),
+            isActive: CGDisplayIsActive(id) != 0,
+            isAsleep: CGDisplayIsAsleep(id) != 0,
+            isOnline: CGDisplayIsOnline(id) != 0
+        ))
     }
 
     static func mainDisplay() -> CGDirectDisplayID? {
