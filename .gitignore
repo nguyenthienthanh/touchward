@@ -7,3 +7,4 @@ dist/
 
 # Claude Code session data: prompts, run logs, metrics. Not part of the work itself.
 .claude/
+Artifacts/
