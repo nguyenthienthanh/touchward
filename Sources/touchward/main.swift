@@ -80,7 +80,7 @@ enum Permissions {
         let hid: String
         switch inputMonitoring {
         case kIOHIDAccessTypeGranted: hid = "granted"
-        case kIOHIDAccessTypeDenied: hid = "BỊ TỪ CHỐI"
+        case kIOHIDAccessTypeDenied: hid = "DENIED"
         default: hid = "not asked"
         }
         return "Accessibility: \(accessibilityGranted ? "granted" : "not granted") · Input Monitoring: \(hid)"
@@ -99,7 +99,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var panel: KeyboardPanel?
     private var surface: KeyboardSurface?
     private var touchDisplayID: CGDirectDisplayID?
-    private var secureInputPoll: Timer?
+    private var focusPoll: Timer?
     private var hasShutDown = false
     private var lastFocusWasSecureField = false
 
@@ -346,7 +346,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         device.stop()
         focusWatcher.stop()
         cursorReturn.stop()
-        stopSecureInputPolling()
+        stopFocusPolling()
         panel?.dismiss()
     }
 
@@ -400,7 +400,6 @@ final class AppController: NSObject, NSApplicationDelegate {
             // while the keyboard is up, a later non-text focus still has to put it away.
             guard focus.isTextInput else {
                 panel.dismiss()
-                self.stopSecureInputPolling()
                 return
             }
             guard let displayID = self.touchDisplayID,
@@ -411,15 +410,16 @@ final class AppController: NSObject, NSApplicationDelegate {
             // pure noise — this is why focusing a chat on the main display used to raise it.
             guard self.isOnTouchDisplay(focus.bounds, displayID: displayID) else {
                 panel.dismiss()
-                self.stopSecureInputPolling()
                 return
             }
 
             self.lastFocusWasSecureField = focus.isSecureField
             surface.setSecureInputWarning(focus.isSecureField || self.injector.isSecureInputActive)
             panel.present(on: screen)
-            self.startSecureInputPolling()
         }
+
+        // Runs for the life of the app, not only while the keyboard is up.
+        startFocusPolling()
     }
 
     /// True when the focused field actually lives on the touchscreen.
@@ -432,28 +432,35 @@ final class AppController: NSObject, NSApplicationDelegate {
         return CGDisplayBounds(displayID).intersects(bounds)
     }
 
-    /// Secure input has no notification, so poll while the keyboard is on screen.
-    /// Focus is re-read on the same tick: plenty of apps drop focus out of a text field
-    /// without emitting any AX notification, and a keyboard that will not go away covers
-    /// the bottom of the screen with no way to dismiss it.
-    private func startSecureInputPolling() {
-        guard secureInputPoll == nil else { return }
-        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
+    /// Re-reads focus for as long as the app runs.
+    ///
+    /// It used to start only once the keyboard was already on screen, which is a loop that
+    /// cannot close: focus was polled only while the keyboard was up, so a keyboard that
+    /// was down could only be raised by an AX notification — and when none arrived, as with
+    /// a field inside a web page, focus was never looked at again for the rest of the
+    /// session. One AX read every 0.4s, with a 0.25s timeout, is a small price for the
+    /// keyboard depending on what is true rather than on being told.
+    private func startFocusPolling() {
+        guard focusPoll == nil else { return }
+        let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             guard let self else { return }
-            // The AX subrole ("this is a password field") and the system flag ("synthetic
-            // keys are blocked right now") are different facts and routinely disagree.
+            self.focusWatcher.refresh()
+
+            // Secure input has no notification either. The AX subrole ("this is a password
+            // field") and the system flag ("synthetic keys are blocked right now") are
+            // different facts and routinely disagree.
+            guard self.panel?.isVisible == true else { return }
             self.surface?.setSecureInputWarning(
                 self.lastFocusWasSecureField || self.injector.isSecureInputActive)
-            self.focusWatcher.refresh()
         }
         // Common mode, so the poll keeps running while a key is being held.
         RunLoop.main.add(timer, forMode: .common)
-        secureInputPoll = timer
+        focusPoll = timer
     }
 
-    private func stopSecureInputPolling() {
-        secureInputPoll?.invalidate()
-        secureInputPoll = nil
+    private func stopFocusPolling() {
+        focusPoll?.invalidate()
+        focusPoll = nil
     }
 }
 

@@ -48,6 +48,7 @@ final class FocusWatcher {
         guard pid != observedPID else { return }
         teardown()
 
+        observedName = NSRunningApplication(processIdentifier: pid)?.localizedName ?? "pid \(pid)"
         let app = AXUIElementCreateApplication(pid)
         // Every AX read below is a blocking IPC call on the main thread, where the touch
         // heartbeat also lives. The default timeout is ~6s: long enough for a beachballing
@@ -56,7 +57,12 @@ final class FocusWatcher {
 
         // Chromium and Electron keep their web accessibility tree switched off until
         // something asks for it. Without this, focus in a web text field never fires.
+        //
+        // Both flags, because which one an app listens to is not consistent: Chromium
+        // documents AXManualAccessibility, while older builds and several Electron apps
+        // only switch on for AXEnhancedUserInterface, the flag VoiceOver sets.
         AXUIElementSetAttributeValue(app, "AXManualAccessibility" as CFString, kCFBooleanTrue)
+        AXUIElementSetAttributeValue(app, "AXEnhancedUserInterface" as CFString, kCFBooleanTrue)
 
         var newObserver: AXObserver?
         let callback: AXObserverCallback = { _, _, _, refcon in
@@ -95,23 +101,36 @@ final class FocusWatcher {
         reportCurrentFocus()
     }
 
-    /// Re-reads focus on demand. Not every app emits an AX notification when focus leaves
-    /// a text field — some emit nothing at all — so the keyboard polls this while it is on
-    /// screen rather than trusting that a notification will arrive.
+    /// Re-reads focus on demand, re-targeting the frontmost app first.
+    ///
+    /// Notifications are an accelerant here, never the mechanism. Plenty of apps emit
+    /// nothing when focus moves inside them, and the workspace notification that says
+    /// "a different app came forward" cannot be relied on either — when it goes missing,
+    /// this watcher sits pointed at an app the user left minutes ago. Polling this makes
+    /// the keyboard depend on what is true rather than on being told.
     func refresh() {
+        if let front = NSWorkspace.shared.frontmostApplication {
+            // No-ops when the pid has not changed, so this is cheap on every tick.
+            observe(pid: front.processIdentifier)
+        }
         reportCurrentFocus()
     }
 
     private func reportCurrentFocus() {
         guard let app = observedApp else {
+            note("no app observed")
             report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
 
         var focused: CFTypeRef?
-        guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
-              let element = focused
-        else {
+        let status = AXUIElementCopyAttributeValue(
+            app, kAXFocusedUIElementAttribute as CFString, &focused)
+        guard status == .success, let element = focused else {
+            // Never silent. An app that will not answer this question looks exactly like an
+            // app with nothing focused, and telling them apart is the difference between a
+            // keyboard that is correctly staying down and one that is broken.
+            note("\(observedName ?? "app") gave no focused element (AXError \(status.rawValue))")
             report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
@@ -119,6 +138,7 @@ final class FocusWatcher {
         // A misbehaving app can return something other than an element here. A force cast
         // would trap and take the touch driver down with it.
         guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
+            note("\(observedName ?? "app") answered with something that is not an element")
             report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
@@ -132,12 +152,11 @@ final class FocusWatcher {
 
         // What the tree actually said. Roles vary wildly between toolkits and web engines,
         // and the last defect here was invisible without this line.
+        let where_ = rect.map { "at (\(Int($0.minX)),\(Int($0.minY))) \(Int($0.width))×\(Int($0.height))" }
+            ?? "no geometry"
         let description = "role=\(role ?? "-") subrole=\(subrole ?? "-")"
-            + " settable=\(described.isValueSettable)"
-        if description != lastDescription {
-            lastDescription = description
-            log("⌨︎ focus: \(description) text=\(TextInputClassifier.isTextInput(described))")
-        }
+            + " settable=\(described.isValueSettable) \(where_)"
+        note("\(observedName ?? "app") \(description) text=\(TextInputClassifier.isTextInput(described))")
 
         report(Focus(isTextInput: TextInputClassifier.isTextInput(described),
                      isSecureField: isSecure,
@@ -145,6 +164,15 @@ final class FocusWatcher {
     }
 
     private var lastDescription: String?
+    private var observedName: String?
+
+    /// One line per *change* of state. Polling four times a second would otherwise bury the
+    /// log, and a repeated line says nothing a first one did not.
+    private func note(_ message: String) {
+        guard message != lastDescription else { return }
+        lastDescription = message
+        log("⌨︎ focus: \(message)")
+    }
 
     /// Follows focus down through containers.
     ///

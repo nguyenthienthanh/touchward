@@ -12,13 +12,51 @@ own mouse events at the point you actually touched.
 
 Entirely user-space: **no kernel extension, no SIP changes.**
 
-| | |
-|---|---|
-| Point, tap, drag | One finger, absolute — the cursor goes where you touch |
-| Scroll | Two fingers, both axes |
-| Zoom | Three fingers, spread or pinch |
-| Type | An on-screen keyboard, iPad layout, on the touch panel itself |
-| Your real mouse and keyboard | Never touched. See [Hands off the real input devices](#hands-off-the-real-input-devices) |
+---
+
+## Features
+
+### The touch panel becomes a real pointing device
+
+- **Absolute pointing.** The cursor goes exactly where your finger lands, rather than
+  drifting from wherever it happened to be. Tap to click, hold for a right click.
+- **One-finger drag** selects text and moves things, the same as holding a mouse button.
+- **Two-finger scroll**, both axes, delivered to the window under your fingers rather than
+  to whatever had the cursor.
+- **Three-finger spread and pinch to zoom.** Two fingers were already scrolling, so zoom
+  takes the gesture nothing else claims.
+- **The cursor comes home.** Half a second after you lift your hand, the pointer returns to
+  the middle of your main display, so the mouse is where you expect it next time.
+
+### An on-screen keyboard that stays out of the way
+
+- **iPadOS layout**, so muscle memory transfers: delete ends the top row, return ends the
+  home row, shift sits at both ends of the bottom letter row, `.?123` / `#+=` switch planes
+  from the corners. Tap shift for one capital, double-tap to lock it.
+- **Only for fields on the touchscreen.** A text field on your main display is typed into
+  with the real keyboard already in front of it.
+- **`⌨︎↓` shrinks it to a tab** in the corner, and the tab taps back to full size.
+- **It says when macOS is blocking it.** Synthetic keystrokes are refused system-wide while
+  Secure Input is on, so instead of swallowing keys the keyboard tells you to use the
+  physical one.
+- **Typing never moves the pointer.** Keys are driven from the touch point directly, not by
+  synthesising a click on the panel.
+
+### It keeps its hands to itself
+
+- **Your real mouse and keyboard are untouched.** Exactly one device is seized, the event
+  tap only listens, and every synthetic event is stamped so it is never confused with the
+  real thing. See [Hands off the real input devices](#hands-off-the-real-input-devices).
+- **No kernel extension, no SIP changes, no login item.** One user-space app, one
+  permission.
+- **Nothing about the hardware is hardcoded.** Coordinate ranges, contact count and finger
+  layout all come from the device's own descriptor, so a panel this code has never seen
+  works without anyone editing a constant. See
+  [Nothing about the device is hardcoded](#nothing-about-the-device-is-hardcoded).
+- **A drag can never leave a button stuck.** Ctrl-C, quit, sleep and USB unplug all release
+  what is held, and a dead report stream is caught by a 2-second backstop.
+- **It says what it is doing.** One log file records which display it picked, what the panel
+  reported, and why the keyboard did or did not come up.
 
 ---
 

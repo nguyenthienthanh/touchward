@@ -11,13 +11,49 @@ bị, đọc toạ độ thật, rồi tự bắn sự kiện chuột vào đún
 
 Chạy hoàn toàn ở user-space: **không kernel extension, không tắt SIP.**
 
-| | |
-|---|---|
-| Trỏ, chạm, kéo | Một ngón, tuyệt đối — con trỏ tới đúng chỗ anh chạm |
-| Cuộn | Hai ngón, cả dọc lẫn ngang |
-| Thu phóng | Ba ngón, xoè ra hoặc chụm vào |
-| Gõ | Bàn phím ảo bố cục iPad, ngay trên màn cảm ứng |
-| Chuột và bàn phím thật | Không bị đụng tới. Xem [Không đụng vào thiết bị nhập thật](#không-đụng-vào-thiết-bị-nhập-thật) |
+---
+
+## Tính năng
+
+### Màn cảm ứng thành một thiết bị trỏ thật sự
+
+- **Trỏ tuyệt đối.** Con trỏ tới đúng chỗ ngón tay đặt xuống, không phải trượt đi từ chỗ nó
+  đang đứng. Chạm để click, giữ để click phải.
+- **Một ngón kéo** để bôi chọn chữ và di chuyển vật, y như giữ nút chuột.
+- **Hai ngón cuộn**, cả hai chiều, và cuộn vào đúng cửa sổ dưới ngón tay chứ không phải cửa
+  sổ đang có con trỏ.
+- **Ba ngón xoè ra / chụm vào để thu phóng.** Hai ngón đã dành cho cuộn, nên thu phóng lấy
+  cử chỉ mà không gì khác giành.
+- **Con trỏ tự về nhà.** Nửa giây sau khi anh nhấc tay, con trỏ quay về giữa màn hình chính,
+  để lần sau cầm chuột là nó đã ở đúng chỗ anh chờ.
+
+### Bàn phím ảo biết tự tránh đường
+
+- **Bố cục iPadOS** để chuyển thẳng thói quen tay: delete cuối hàng trên, return cuối hàng
+  giữa, shift hai đầu hàng chữ dưới, `.?123` / `#+=` đổi mặt phím ở góc. Chạm shift một lần
+  được một chữ hoa, chạm đúp thì khoá hoa.
+- **Chỉ hiện với ô nhập nằm trên màn cảm ứng.** Ô ở màn chính thì anh gõ bằng bàn phím thật
+  đang ngay trước mặt.
+- **`⌨︎↓` thu nhỏ thành một tab** ở góc, chạm tab là mở lại.
+- **Nói rõ khi macOS chặn.** Lúc Secure Input bật, phím tổng hợp bị từ chối trên toàn hệ
+  thống — thay vì nuốt phím, bàn phím báo anh dùng bàn phím thật.
+- **Gõ không kéo con trỏ đi.** Phím được gọi thẳng từ điểm chạm chứ không bắn click giả lên
+  panel.
+
+### Không đụng vào thứ của người khác
+
+- **Chuột và bàn phím thật nguyên vẹn.** Chỉ đúng một thiết bị bị seize, event tap chỉ quan
+  sát, và mọi sự kiện tổng hợp đều đóng dấu nên không bao giờ lẫn với đồ thật. Xem
+  [Không đụng vào thiết bị nhập thật](#không-đụng-vào-thiết-bị-nhập-thật).
+- **Không kernel extension, không tắt SIP, không login item.** Một app user-space, một
+  quyền.
+- **Không hardcode gì về phần cứng.** Dải toạ độ, số điểm chạm, bố cục ngón đều lấy từ
+  descriptor của chính thiết bị, nên một panel code này chưa từng thấy vẫn chạy mà không ai
+  phải sửa hằng số. Xem [Không hardcode gì về thiết bị](#không-hardcode-gì-về-thiết-bị).
+- **Một cú kéo không bao giờ để kẹt nút chuột.** Ctrl-C, thoát app, máy ngủ, rút cáp USB đều
+  nhả thứ đang giữ, và luồng report chết giữa chừng thì có hạn 2 giây bắt lại.
+- **Nó nói ra nó đang làm gì.** Một file log ghi lại đã chọn màn nào, panel báo gì, và vì sao
+  bàn phím hiện hay không hiện.
 
 ---
 
