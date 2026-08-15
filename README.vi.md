@@ -1,8 +1,8 @@
 # Touchward
 
-Biến màn hình cảm ứng USB thành thiết bị trỏ **tuyệt đối** trên macOS.
+[🇬🇧 English](README.md) · **Tiếng Việt**
 
-🇬🇧 [English version](README.md)
+Biến màn hình cảm ứng USB thành thiết bị trỏ **tuyệt đối** trên macOS.
 
 macOS không có driver dịch toạ độ HID digitizer thành vị trí con trỏ. Với màn hình
 dual-mode — loại dùng chip SiS — thứ duy nhất tới được WindowServer là bit Button 1: một cú

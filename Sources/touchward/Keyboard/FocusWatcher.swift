@@ -1,5 +1,6 @@
 import AppKit
 import ApplicationServices
+import TouchwardCore
 
 /// Watches which UI element has keyboard focus so the keyboard can show itself only when
 /// a text field is actually waiting for input.
@@ -121,20 +122,63 @@ final class FocusWatcher {
             report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
-        let target = element as! AXUIElement
+        let target = deepestFocus(in: element as! AXUIElement)
         let role = stringAttribute(target, kAXRoleAttribute)
         let subrole = stringAttribute(target, kAXSubroleAttribute)
-
-        let textRoles: Set<String> = [
-            kAXTextFieldRole as String,
-            kAXTextAreaRole as String,
-            kAXComboBoxRole as String,
-        ]
+        let described = FocusedElement(role: role, subrole: subrole,
+                                       isValueSettable: isValueSettable(target))
         let isSecure = subrole == (kAXSecureTextFieldSubrole as String)
+        let rect = bounds(of: target) ?? focusedWindowBounds(app)
 
-        report(Focus(isTextInput: role.map(textRoles.contains) ?? false,
+        // What the tree actually said. Roles vary wildly between toolkits and web engines,
+        // and the last defect here was invisible without this line.
+        let description = "role=\(role ?? "-") subrole=\(subrole ?? "-")"
+            + " settable=\(described.isValueSettable)"
+        if description != lastDescription {
+            lastDescription = description
+            log("⌨︎ focus: \(description) text=\(TextInputClassifier.isTextInput(described))")
+        }
+
+        report(Focus(isTextInput: TextInputClassifier.isTextInput(described),
                      isSecureField: isSecure,
-                     bounds: bounds(of: target) ?? focusedWindowBounds(app)))
+                     bounds: rect))
+    }
+
+    private var lastDescription: String?
+
+    /// Follows focus down through containers.
+    ///
+    /// An application often answers "what has focus" with the web area or the scroll view
+    /// that *holds* the focused field rather than the field itself — which is exactly why a
+    /// browser's own address bar raised the keyboard while an input inside a page did not.
+    /// Each container is asked for its own focused element until something concrete turns
+    /// up, bounded so a tree that points at itself cannot spin.
+    private func deepestFocus(in element: AXUIElement) -> AXUIElement {
+        var current = element
+
+        for _ in 0..<4 {
+            let role = stringAttribute(current, kAXRoleAttribute)
+            guard TextInputClassifier.isContainer(role: role) else { return current }
+
+            var inner: CFTypeRef?
+            guard AXUIElementCopyAttributeValue(
+                      current, kAXFocusedUIElementAttribute as CFString, &inner) == .success,
+                  let inner, CFGetTypeID(inner) == AXUIElementGetTypeID() else { return current }
+
+            let next = inner as! AXUIElement
+            guard !CFEqual(next, current) else { return current }
+            current = next
+        }
+        return current
+    }
+
+    /// Whether the element's value can be written. For a field inside a web page this is
+    /// often the only dependable signal that it is somewhere text goes.
+    private func isValueSettable(_ element: AXUIElement) -> Bool {
+        var settable: DarwinBoolean = false
+        guard AXUIElementIsAttributeSettable(
+                  element, kAXValueAttribute as CFString, &settable) == .success else { return false }
+        return settable.boolValue
     }
 
     /// The field's own rectangle. AX reports it in the same global, top-left-origin space

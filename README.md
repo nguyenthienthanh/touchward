@@ -1,8 +1,8 @@
 # Touchward
 
-Turns a USB touchscreen into an **absolute** pointing device on macOS.
+**English** · [🇻🇳 Tiếng Việt](README.vi.md)
 
-🇻🇳 [Bản tiếng Việt](README.vi.md)
+Turns a USB touchscreen into an **absolute** pointing device on macOS.
 
 macOS has no driver that translates HID digitizer coordinates into a pointer position. On a
 dual-mode panel — the kind built around an SiS controller — the only thing that reaches the
