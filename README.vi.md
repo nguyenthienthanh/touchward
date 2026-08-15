@@ -15,6 +15,7 @@ Chạy hoàn toàn ở user-space: **không kernel extension, không tắt SIP.*
 |---|---|
 | Trỏ, chạm, kéo | Một ngón, tuyệt đối — con trỏ tới đúng chỗ anh chạm |
 | Cuộn | Hai ngón, cả dọc lẫn ngang |
+| Thu phóng | Ba ngón, xoè ra hoặc chụm vào |
 | Gõ | Bàn phím ảo bố cục iPad, ngay trên màn cảm ứng |
 | Chuột và bàn phím thật | Không bị đụng tới. Xem [Không đụng vào thiết bị nhập thật](#không-đụng-vào-thiết-bị-nhập-thật) |
 
@@ -138,7 +139,7 @@ bash scripts/make-dmg.sh           # Artifacts/Touchward-1.0.0.dmg
 ### Chạy test
 
 ```bash
-swift test                         # 70 test, không cần quyền gì
+swift test                         # 80 test, không cần quyền gì
 ```
 
 `TouchwardCore` là logic thuần, không IOKit không AppKit, đúng để phần parse, cử chỉ và ánh
@@ -178,12 +179,21 @@ tccutil reset All com.ethannguyen.touchward
 | Giữ > 0,6 giây | Click phải |
 | Một ngón kéo | Kéo — bôi chọn chữ, di chuyển vật |
 | Hai ngón kéo | Cuộn, cả hai chiều |
+| Ba ngón xoè ra / chụm vào | Phóng to / thu nhỏ |
 | Hai ngón chạm nhanh | Click phải |
 | Chạm ô nhập trên màn cảm ứng | Bàn phím ảo hiện trên chính màn cảm ứng |
 | Nhấc hết tay | Sau ~0,5 giây con trỏ về màn hình chính |
 
 Cuộn bị ngược chiều? Đổi `contentFollowsFinger` trong `EventSynthesizer.swift` — đó là chỗ
 duy nhất quyết định chiều.
+
+**Thu phóng dùng ba ngón chứ không phải hai**, vì hai ngón đã dành cho cuộn. Cứ mỗi ~10% mở
+ra hoặc khép lại là một lần Command + `=` / Command + `-` — đúng phím tắt của View ▸ Zoom In
+/ Zoom Out trong gần như mọi app Mac. macOS không có API công khai cho cử chỉ phóng to thật;
+Command + cuộn thì nhắm đúng cửa sổ dưới ngón tay, nhưng app nào không hỗ trợ nó sẽ **cuộn
+tài liệu** thay vì phóng — còn phím tắt mà app không hỗ trợ thì đơn giản là không xảy ra gì.
+Đánh đổi: **lệnh phóng đi vào app đang được focus**, nên chạm vào cửa sổ trước nếu nó chưa
+được chọn.
 
 ## Bàn phím ảo
 
@@ -204,7 +214,7 @@ lần được một chữ hoa, chạm đúp thì khoá hoa.
 Tách đôi có chủ đích, để phần logic kiểm chứng được mà không cần quyền hệ thống:
 
 ```
-TouchwardCore/          ← hàm thuần, 70 unit test, `swift test` không cần quyền TCC
+TouchwardCore/          ← hàm thuần, 80 unit test, `swift test` không cần quyền TCC
   TouchValueAssembler     ghép frame từ (usage, value) đã decode — không offset byte
   SlotTracker             trạng thái từng ngón cho report multitouch
   PalmFilter              ngưỡng theo dải thật của thiết bị, không theo hằng số
@@ -315,6 +325,8 @@ Những thứ không tự động hoá được vì phụ thuộc phần cứng 
 - [ ] Chạm 4 góc → không lệch quá vài mm
 - [ ] Giữ 1 giây → menu chuột phải hiện ra tại điểm chạm
 - [ ] Hai ngón kéo trong trình duyệt → trang cuộn, đúng chiều
+- [ ] Ba ngón xoè ra trong trình duyệt → trang phóng to; chụm vào → thu nhỏ
+- [ ] Ba ngón trượt ngang mà không xoè → không phóng, cũng không cuộn
 - [ ] Kéo một ngón qua đoạn văn bản → bôi chọn được
 - [ ] Nhấc tay, đợi 1 giây → con trỏ về màn chính
 - [ ] **Đang rê chuột thật thì chạm màn cảm ứng → chuột không khựng, không bị cướp**
