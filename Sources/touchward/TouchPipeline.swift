@@ -87,7 +87,7 @@ final class TouchPipeline {
         // work; say so once rather than leaving the user to guess why nothing scrolls.
         if frame.contacts.count >= 2, !hasSeenMultitouch {
             hasSeenMultitouch = true
-            log("✅ Panel báo \(frame.contacts.count) điểm chạm — cuộn hai ngón dùng được.")
+            log("✅ The panel reports \(frame.contacts.count) contacts — two-finger scrolling works.")
         }
 
         // A live touch means the user is not on the mouse — drop any queued cursor return.
@@ -165,7 +165,7 @@ final class TouchPipeline {
             if case .scroll(let dx, let dy, let at) = event {
                 scrollsEmitted += 1
                 if scrollsEmitted <= 6 {
-                    log("   ↕︎ scroll \(Int(dx)),\(Int(dy)) tại (\(Int(at.x)),\(Int(at.y)))")
+                    log("   ↕︎ scroll \(Int(dx)),\(Int(dy)) at (\(Int(at.x)),\(Int(at.y)))")
                 }
             }
 

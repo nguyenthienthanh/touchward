@@ -70,7 +70,7 @@ final class KeyboardSurface: NSView {
 final class MinimizedTab: NSView {
     var onTap: (() -> Void)?
 
-    private let label = NSTextField(labelWithString: "⌨︎ Bàn phím")
+    private let label = NSTextField(labelWithString: "⌨︎ Keyboard")
     private var isPressed = false {
         didSet { updateColors() }
     }

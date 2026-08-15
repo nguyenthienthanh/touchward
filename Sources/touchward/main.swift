@@ -79,11 +79,11 @@ enum Permissions {
     static func describe() -> String {
         let hid: String
         switch inputMonitoring {
-        case kIOHIDAccessTypeGranted: hid = "đã cấp"
+        case kIOHIDAccessTypeGranted: hid = "granted"
         case kIOHIDAccessTypeDenied: hid = "BỊ TỪ CHỐI"
-        default: hid = "chưa hỏi"
+        default: hid = "not asked"
         }
-        return "Accessibility: \(accessibilityGranted ? "đã cấp" : "chưa cấp") · Input Monitoring: \(hid)"
+        return "Accessibility: \(accessibilityGranted ? "granted" : "not granted") · Input Monitoring: \(hid)"
     }
 }
 
@@ -107,7 +107,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var hasRequestedPermissions = false
 
     func applicationDidFinishLaunching(_ notification: Notification) {
-        log("▶️  Touchward khởi động. \(Permissions.describe())")
+        log("▶️  Touchward starting. \(Permissions.describe())")
 
         // Accessibility is asked for up front: its prompt is cheap and non-blocking.
         if !Permissions.accessibilityGranted {
@@ -131,19 +131,19 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         case kIOHIDAccessTypeDenied:
             log("""
-                ⚠️  Quyền theo dõi thiết bị nhập đang bị từ chối, macOS sẽ không hỏi lại.
-                    Cách sửa: bật Accessibility cho Touchward — quyền đó bao trùm luôn
-                    việc đọc màn cảm ứng, nên app KHÔNG cần xuất hiện trong danh sách
-                    Input Monitoring.
+                ⚠️  Input Monitoring is denied, and macOS will not ask again.
+                    Fix: grant Accessibility to Touchward. That grant also covers reading
+                    the touchscreen, so the app does NOT need to appear in the Input
+                    Monitoring list.
                       System Settings → Privacy & Security → Accessibility
-                    Nếu vẫn kẹt, xoá trạng thái cũ rồi mở lại app:
+                    If it stays stuck, clear the old state and open the app again:
                       tccutil reset All com.ethannguyen.touchward
                 """)
             Permissions.openSettings()
             pollUntilGranted()
 
         default:
-            log("⏳ Đang xin quyền Input Monitoring…")
+            log("⏳ Requesting Input Monitoring…")
             // An accessory app is never frontmost, and macOS declines to raise a TCC
             // dialog on behalf of a process the user is not looking at. Become a regular
             // app just long enough to be asked, then drop back so nothing steals focus
@@ -156,7 +156,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                 let granted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
                 DispatchQueue.main.async {
                     NSApp.setActivationPolicy(.accessory)
-                    log("   Kết quả: \(granted ? "đã cấp" : "chưa cấp")")
+                    log("   Result: \(granted ? "granted" : "not granted")")
                     if granted {
                         self.begin()
                     } else {
@@ -181,11 +181,11 @@ final class AppController: NSObject, NSApplicationDelegate {
 
         log("""
 
-            Bật Touchward ở đây rồi app tự chạy tiếp:
+            Enable Touchward here and it will carry on by itself:
               System Settings → Privacy & Security → Accessibility
 
-            Accessibility bao trùm cả việc đọc màn cảm ứng, nên Touchward sẽ KHÔNG
-            hiện trong danh sách Input Monitoring — đó là bình thường.
+            Accessibility also covers reading the touchscreen, so Touchward will NOT
+            appear in the Input Monitoring list. That is expected.
             """)
 
         var ticks = 0
@@ -197,14 +197,14 @@ final class AppController: NSObject, NSApplicationDelegate {
                 // which is exactly how this looked the first time it happened.
                 ticks += 1
                 if ticks % 20 == 0 {
-                    log("… vẫn đang chờ cấp quyền. \(Permissions.describe())")
+                    log("… still waiting for permission. \(Permissions.describe())")
                 }
                 return
             }
 
             self.permissionPoll?.invalidate()
             self.permissionPoll = nil
-            log("✅ Accessibility đã cấp — khởi động lại để áp dụng.")
+            log("✅ Accessibility granted — relaunching to pick it up.")
             self.relaunch()
         }
         RunLoop.main.add(timer, forMode: .common)
@@ -215,9 +215,9 @@ final class AppController: NSObject, NSApplicationDelegate {
     /// is an agent with no window — it looks like a crash. Use the reopen as a nudge to
     /// re-check and report where things stand.
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
-        log("↻ Mở lại. \(Permissions.describe())")
+        log("↻ Reopened. \(Permissions.describe())")
         if Permissions.accessibilityGranted && !Permissions.inputMonitoringGranted {
-            log("   Quyền đã có nhưng tiến trình này giữ câu trả lời cũ — khởi động lại.")
+            log("   Permission is granted but this process holds a stale answer — relaunching.")
             relaunch()
         }
         return true
@@ -236,27 +236,28 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard let touchDisplay = DisplayRegistry.touchDisplay(),
               let mainDisplay = DisplayRegistry.mainDisplay() else {
             log("""
-                ❌ Không xác định được màn hình nào là màn cảm ứng \
-                (đang có \(DisplayRegistry.activeDisplays().count) màn hình).
-                Rút bớt màn phụ khác rồi chạy lại, hoặc đặt TOUCHBRIDGE_DISPLAY_ID=<id>.
+                ❌ Cannot tell which display is the touchscreen \
+                (\(DisplayRegistry.activeDisplays().count) displays attached).
+                Unplug the other secondary displays and try again, or set
+                TOUCHWARD_DISPLAY_ID=<id>.
                 """)
             exit(1)
         }
 
         touchDisplayID = touchDisplay
-        log("🖥  Màn cảm ứng: display \(touchDisplay) bounds \(CGDisplayBounds(touchDisplay))")
+        log("🖥  Touch display: \(touchDisplay) bounds \(CGDisplayBounds(touchDisplay))")
 
         installShutdownHandlers()
 
         if !cursorReturn.startObservingRealMouse() {
-            log("⚠️  Không cài được event tap quan sát chuột thật — con trỏ vẫn sẽ trả về, "
-                + "nhưng sẽ không tránh được lúc anh đang cầm chuột.")
+            log("⚠️  Could not install the real-mouse event tap — the cursor will still return "
+                + "home, but it will not get out of the way while you use the mouse.")
         }
 
         // Unplugging mid-drag would otherwise leave the left button logically pressed.
         device.onDisconnect = { [weak self] in
             DispatchQueue.main.async {
-                log("🔌 Màn cảm ứng đã rút. Nhả mọi nút đang giữ.")
+                log("🔌 Touchscreen unplugged. Releasing anything held down.")
                 self?.pipeline?.releaseEverything()
             }
         }
@@ -270,16 +271,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         case .success(let discovered):
             profile = discovered
             log("🔎 \(profile.productName): \(Int(profile.logicalMaxX))×\(Int(profile.logicalMaxY)) "
-                + "logical, tối đa \(profile.maxContacts) điểm chạm")
+                + "logical, up to \(profile.maxContacts) contacts")
             log(device.isSeized
-                ? "✅ Đã giành thiết bị cảm ứng (seize) — macOS thôi tự sinh click."
-                : "⚠️  Không seize được thiết bị; macOS có thể vẫn sinh click ma tại con trỏ.")
+                ? "✅ Seized the touch device — macOS stops synthesising clicks from it."
+                : "⚠️  Could not seize the device; macOS may still emit phantom clicks at the cursor.")
             // `inputModeSet` now means the device read back mode 2, not merely that a
             // write returned success — the details are logged where the switch happens.
             if !device.inputModeSet {
                 log("""
-                    ℹ️  Panel đang ở mouse mode: chỉ báo 1 điểm chạm.
-                        Trỏ, chạm và kéo vẫn chạy; cuộn hai ngón thì không.
+                    ℹ️  The panel is in mouse-compatibility mode: it reports a single
+                        contact. Pointing, tapping and dragging still work; two-finger
+                        scrolling cannot.
                     """)
             }
         case .failure(let error):
@@ -291,7 +293,7 @@ final class AppController: NSObject, NSApplicationDelegate {
                                            touchDisplay: touchDisplay,
                                            mainDisplay: mainDisplay,
                                            cursorReturn: cursorReturn) else {
-            log("❌ Không tạo được CGEventSource.")
+            log("❌ Could not create a CGEventSource.")
             exit(1)
         }
         self.pipeline = pipeline
@@ -309,7 +311,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         setUpKeyboard()
-        log("▶️  Touchward đang chạy. Ctrl-C để thoát.")
+        log("▶️  Touchward is running. Ctrl-C to quit.")
     }
 
     /// A held drag must not survive the process. Ctrl-C is the documented way to quit, and
