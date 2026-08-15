@@ -100,6 +100,7 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var surface: KeyboardSurface?
     private var touchDisplayID: CGDirectDisplayID?
     private var focusPoll: Timer?
+    private var isTouchDisplayActive = false
     private var hasShutDown = false
     private var lastFocusWasSecureField = false
 
@@ -233,20 +234,6 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func begin() {
-        guard let touchDisplay = DisplayRegistry.touchDisplay(),
-              let mainDisplay = DisplayRegistry.mainDisplay() else {
-            log("""
-                ❌ Cannot tell which display is the touchscreen \
-                (\(DisplayRegistry.activeDisplays().count) displays attached).
-                Unplug the other secondary displays and try again, or set
-                TOUCHWARD_DISPLAY_ID=<id>.
-                """)
-            exit(1)
-        }
-
-        touchDisplayID = touchDisplay
-        log("🖥  Touch display: \(touchDisplay) bounds \(CGDisplayBounds(touchDisplay))")
-
         installShutdownHandlers()
 
         if !cursorReturn.startObservingRealMouse() {
@@ -258,9 +245,51 @@ final class AppController: NSObject, NSApplicationDelegate {
         device.onDisconnect = { [weak self] in
             DispatchQueue.main.async {
                 log("🔌 Touchscreen unplugged. Releasing anything held down.")
-                self?.pipeline?.releaseEverything()
+                self?.deactivate()
             }
         }
+
+        DisplayRegistry.onReconfiguration { [weak self] in
+            DispatchQueue.main.async { self?.geometryChanged() }
+        }
+
+        // Waking from sleep can drop the final report of whatever was in flight.
+        NSWorkspace.shared.notificationCenter.addObserver(
+            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            self?.pipeline?.releaseEverything()
+        }
+
+        setUpKeyboard()
+        activateIfPossible()
+        log("▶️  Touchward is running. Ctrl-C to quit.")
+    }
+
+    /// Brings the touch side up when — and only when — there is a usable touchscreen and a
+    /// digitizer to read.
+    ///
+    /// The app used to exit if either was missing at launch, which made it useless as
+    /// something you leave running: the panel is unplugged more often than it is plugged
+    /// in. It now waits instead, and the display reconfiguration callback and the focus
+    /// tick both come back through here.
+    private func activateIfPossible() {
+        guard let touchDisplay = evaluateTouchDisplay(),
+              let mainDisplay = DisplayRegistry.mainDisplay() else {
+            if !hasReportedNoDisplay {
+                hasReportedNoDisplay = true
+                log("""
+                    💤 Waiting for a touchscreen. Nothing is active until one is connected \
+                    and switched on.
+                        With several secondary displays attached, say which is the panel:
+                        TOUCHWARD_DISPLAY_ID=<id>
+                    """)
+            }
+            return
+        }
+        hasReportedNoDisplay = false
+
+        guard pipeline == nil else { return }
+        log("🖥  Touch display: \(touchDisplay) bounds \(CGDisplayBounds(touchDisplay))")
 
         // The device is started first: everything downstream is sized from what it
         // declares, so there is nothing to configure until it has answered.
@@ -285,9 +314,15 @@ final class AppController: NSObject, NSApplicationDelegate {
                     """)
             }
         case .failure(let error):
-            log("❌ \(error.description)")
-            exit(1)
+            // Not fatal: the panel may be plugged in later, and the next display change
+            // brings us back here.
+            if !hasReportedNoDevice {
+                hasReportedNoDevice = true
+                log("⏳ \(error.description)")
+            }
+            return
         }
+        hasReportedNoDevice = false
 
         guard let pipeline = TouchPipeline(profile: profile,
                                            touchDisplay: touchDisplay,
@@ -298,21 +333,26 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         self.pipeline = pipeline
         pipeline.start()
-
-        DisplayRegistry.onReconfiguration { [weak self] in
-            DispatchQueue.main.async { self?.geometryChanged() }
-        }
-
-        // Waking from sleep can drop the final report of whatever was in flight.
-        NSWorkspace.shared.notificationCenter.addObserver(
-            forName: NSWorkspace.willSleepNotification, object: nil, queue: .main
-        ) { [weak self] _ in
-            self?.pipeline?.releaseEverything()
-        }
-
-        setUpKeyboard()
-        log("▶️  Touchward is running. Ctrl-C to quit.")
     }
+
+    /// Puts the touch side back to sleep and lets it be started again.
+    ///
+    /// The pipeline is dropped rather than merely suspended: it is built around the profile
+    /// the device reported, and a panel that comes back may not be the same panel. Keeping
+    /// the old one is also what stopped a replug from ever reactivating, since activation
+    /// skips itself while a pipeline exists.
+    private func deactivate() {
+        pipeline?.stop()
+        pipeline = nil
+        device.stop()
+        panel?.dismiss()
+        isTouchDisplayActive = false
+        touchDisplayID = nil
+    }
+
+    private var hasReportedNoDisplay = false
+    private var hasReportedNoDevice = false
+    private var activationTicks = 0
 
     /// A held drag must not survive the process. Ctrl-C is the documented way to quit, and
     /// SIGINT bypasses AppKit entirely — so both paths need the same release.
@@ -350,10 +390,45 @@ final class AppController: NSObject, NSApplicationDelegate {
         panel?.dismiss()
     }
 
-    private func geometryChanged() {
-        guard let touch = DisplayRegistry.touchDisplay(), let main = DisplayRegistry.mainDisplay() else { return }
+    /// The single place that decides whether the touchscreen counts as present.
+    ///
+    /// Called on every display reconfiguration and on each focus tick, because a monitor
+    /// being switched off does not always announce itself as a reconfiguration — and the
+    /// three call sites that used to make this judgement each just returned when the
+    /// display was missing, quietly leaving whatever was on screen exactly where it was.
+    @discardableResult
+    private func evaluateTouchDisplay() -> CGDirectDisplayID? {
+        let touch = DisplayRegistry.usableTouchDisplay()
         touchDisplayID = touch
-        pipeline?.refreshGeometry(touchDisplay: touch, mainDisplay: main)
+
+        let wasActive = isTouchDisplayActive
+        isTouchDisplayActive = touch != nil
+        pipeline?.setSuspended(touch == nil)
+
+        if let touch, let main = DisplayRegistry.mainDisplay() {
+            pipeline?.refreshGeometry(touchDisplay: touch, mainDisplay: main)
+        }
+
+        if wasActive != isTouchDisplayActive {
+            log(isTouchDisplayActive
+                ? "🖥  Touch display is back — touch input is live again."
+                : "💤 No usable touch display. Touch input, gestures and the keyboard are off.")
+        }
+
+        // The keyboard belongs to that screen. With the screen gone macOS would relocate
+        // the panel onto the main display, which is how an on-screen keyboard ended up
+        // covering the bottom of a monitor that has no touchscreen at all.
+        if touch == nil {
+            panel?.dismiss()
+        }
+        return touch
+    }
+
+    private func geometryChanged() {
+        // A display appearing is the usual way a panel becomes usable, so this is also
+        // where a dormant app wakes up.
+        activateIfPossible()
+        guard let touch = touchDisplayID else { return }
         if let screen = NSScreen.matching(displayID: touch), panel?.isVisible == true {
             panel?.present(on: screen)
         }
@@ -402,8 +477,13 @@ final class AppController: NSObject, NSApplicationDelegate {
                 panel.dismiss()
                 return
             }
-            guard let displayID = self.touchDisplayID,
-                  let screen = NSScreen.matching(displayID: displayID) else { return }
+            // Re-checked here rather than trusted from the last tick: the screen can go
+            // away between the focus change and this line.
+            guard let displayID = self.evaluateTouchDisplay(),
+                  let screen = NSScreen.matching(displayID: displayID) else {
+                panel.dismiss()
+                return
+            }
 
             // A field on the other display is typed into with the real keyboard sitting in
             // front of it. Throwing an on-screen keyboard onto the touch panel for it is
@@ -444,6 +524,20 @@ final class AppController: NSObject, NSApplicationDelegate {
         guard focusPoll == nil else { return }
         let timer = Timer(timeInterval: 0.4, repeats: true) { [weak self] _ in
             guard let self else { return }
+
+            // Cheap, and the only way to notice a monitor being switched off: that does
+            // not always arrive as a display reconfiguration.
+            self.evaluateTouchDisplay()
+            guard self.isTouchDisplayActive else { return }
+
+            // A panel plugged in while its display was already attached raises no display
+            // reconfiguration, so the dormant case gets a slow retry from here too.
+            if self.pipeline == nil {
+                self.activationTicks += 1
+                if self.activationTicks % 8 == 0 { self.activateIfPossible() }
+                return
+            }
+
             self.focusWatcher.refresh()
 
             // Secure input has no notification either. The AX subrole ("this is a password

@@ -74,7 +74,23 @@ final class TouchPipeline {
     private var hasSeenMultitouch = false
     private var scrollsEmitted = 0
 
+    /// True while the touchscreen is unusable — unplugged, asleep, or its monitor switched
+    /// off. Reports keep arriving in that last case, because plenty of panels keep their
+    /// USB side powered with the screen dark, and acting on them would drive the pointer to
+    /// coordinates on a display nobody can see.
+    private(set) var isSuspended = false
+
+    func setSuspended(_ suspended: Bool) {
+        guard suspended != isSuspended else { return }
+        isSuspended = suspended
+        // Whatever was under a finger when the screen went away has to be let go, or the
+        // button stays logically held for the rest of the session.
+        if suspended { releaseEverything() }
+    }
+
     func handle(_ raw: TouchFrame) {
+        guard !isSuspended else { return }
+
         let frame = palmFilter.reject(raw)
 
         framesHandled += 1

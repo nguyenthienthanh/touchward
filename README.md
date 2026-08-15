@@ -120,6 +120,12 @@ Reports of other hardware — working or not — are welcome.
 - Exactly one secondary display, or `TOUCHWARD_DISPLAY_ID` set. Touchward refuses to guess
   which screen is the touch panel when several could be.
 
+Touchward is safe to leave running with nothing plugged in. **Every touch behaviour is off
+until the panel is connected *and* switched on** — a monitor in standby usually keeps its
+USB side powered, so the digitizer goes on reporting contacts for a screen nobody can see,
+and acting on those would move the cursor somewhere you cannot follow it. The app waits,
+says so in the log, and comes up by itself when the panel does.
+
 ---
 
 ## Build and run
@@ -179,7 +185,7 @@ bash scripts/make-dmg.sh           # Artifacts/Touchward-1.0.0.dmg
 ### Running the tests
 
 ```bash
-swift test                         # 80 tests, no permissions required
+swift test                         # 96 tests, no permissions required
 ```
 
 `TouchwardCore` is pure logic with no IOKit and no AppKit, precisely so the parsing,
@@ -256,7 +262,7 @@ return ends the home row, shift sits at both ends of the bottom letter row, and 
 Split deliberately, so the logic is verifiable without system permissions:
 
 ```
-TouchwardCore/          ← pure functions, 80 unit tests, `swift test` needs no TCC grants
+TouchwardCore/          ← pure functions, 96 unit tests, `swift test` needs no TCC grants
   TouchValueAssembler     builds frames from decoded (usage, value) pairs — no byte offsets
   SlotTracker             per-finger state for multitouch reports
   PalmFilter              threshold scaled to the device's own range, not a constant
@@ -332,7 +338,10 @@ tail -f ~/Library/Logs/Touchward.log
 | `Mapped 5 finger slots from the descriptor` | Finger collections were found and mapped. |
 | `The panel reports 2 contacts` | A second finger genuinely arrived. |
 | `Could not seize the device` | macOS is still driving the pointer from the panel too; expect phantom clicks. |
-| `Cannot tell which display is the touchscreen` | Several secondary displays. Set `TOUCHWARD_DISPLAY_ID=<id>`. |
+| `Waiting for a touchscreen` | No usable panel: not connected, or connected with its monitor switched off. Everything touch-related stays off until one appears. |
+| `No usable touch display` | The panel went away while running. Touch input and the keyboard are suspended; anything held down was released. |
+| `Touch display is back` | It reappeared and touch input is live again. |
+| Several secondary displays attached | Touchward will not guess which is the panel. Set `TOUCHWARD_DISPLAY_ID=<id>`. |
 
 **Touching the panel does nothing.** Check Accessibility is granted (the first log line
 says). Then check the app is running at all: `pgrep -fl Touchward`.
