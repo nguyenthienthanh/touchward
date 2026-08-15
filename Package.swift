@@ -4,6 +4,14 @@ import PackageDescription
 let package = Package(
     name: "Touchward",
     platforms: [.macOS(.v13)],
+    products: [
+        // TouchwardCore is the reusable half: touch-frame assembly, palm rejection,
+        // coordinate mapping and the gesture state machine, all pure and free of IOKit.
+        // Declared as a product so other packages can depend on it — without one, SwiftPM
+        // only synthesises the executable and the library is unreachable from outside.
+        .library(name: "TouchwardCore", targets: ["TouchwardCore"]),
+        .executable(name: "touchward", targets: ["touchward"]),
+    ],
     targets: [
         // Pure logic: no IOKit, no AppKit. Runs under `swift test` with no TCC grants.
         .target(name: "TouchwardCore"),
