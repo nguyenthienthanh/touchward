@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import TouchBridgeCore
+@testable import TouchwardCore
 
 /// Contracts that exist because the stream is hardware: reports arrive late, stop without
 /// warning, and contact identities are not stable.

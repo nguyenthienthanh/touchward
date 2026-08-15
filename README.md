@@ -1,10 +1,10 @@
-# TouchBridge
+# Touchward
 
 Biến màn hình cảm ứng USB thành thiết bị trỏ **tuyệt đối** trên macOS.
 
 macOS không có driver dịch toạ độ HID digitizer thành vị trí con trỏ. Với màn hình
 dual-mode như chip SiS trong máy này, thứ duy nhất tới được WindowServer là bit Button 1 —
-một cú nhấn không kèm toạ độ, nên nó rơi vào đúng chỗ con trỏ đang đứng. TouchBridge giành
+một cú nhấn không kèm toạ độ, nên nó rơi vào đúng chỗ con trỏ đang đứng. Touchward giành
 lấy thiết bị, đọc toạ độ thật, rồi tự bắn sự kiện chuột vào đúng điểm chạm.
 
 Chạy hoàn toàn ở user-space: **không kernel extension, không tắt SIP.**
@@ -13,7 +13,7 @@ Chạy hoàn toàn ở user-space: **không kernel extension, không tắt SIP.*
 
 ```bash
 bash scripts/bundle.sh          # build + đóng gói + ký ad-hoc
-open build/TouchBridge.app
+open build/Touchward.app
 ```
 
 Lần đầu macOS sẽ hỏi hai quyền. Nếu không thấy hộp thoại, bật tay trong
@@ -27,7 +27,7 @@ System Settings → Privacy & Security:
 Muốn xem log thì chạy thẳng binary thay vì `open`:
 
 ```bash
-build/TouchBridge.app/Contents/MacOS/TouchBridge
+build/Touchward.app/Contents/MacOS/Touchward
 ```
 
 > **Vì sao phải đóng gói .app?** TCC ghi nhớ quyền theo chữ ký. Binary trần từ
@@ -54,13 +54,13 @@ chỗ duy nhất quyết định chiều.
 Tách đôi có chủ đích, để phần logic kiểm chứng được mà không cần quyền hệ thống:
 
 ```
-TouchBridgeCore/          ← hàm thuần, 60 unit test, chạy `swift test` không cần TCC
+TouchwardCore/          ← hàm thuần, 60 unit test, chạy `swift test` không cần TCC
   TouchValueAssembler     ghép frame từ (usage, value) đã decode — không offset byte
   PalmFilter              ngưỡng theo dải thật của thiết bị, không theo hằng số
   CoordinateMapper        raw → toạ độ global, có calibration + clamp
   GestureRecognizer       state machine kiểu trackpad
 
-touchbridge/              ← tầng hệ thống, không unit test được
+touchward/              ← tầng hệ thống, không unit test được
   HIDTouchDevice          tìm thiết bị theo HID usage, đọc profile từ descriptor
   EventSynthesizer        CGEvent có đóng dấu nguồn
   CursorReturn            trả con trỏ + hàng rào bảo vệ chuột thật
@@ -95,11 +95,11 @@ rõ ràng** thay vì đoán bừa — đặt `TOUCHBRIDGE_DISPLAY_ID=<id>` để
 
 Đây là ràng buộc cứng, và có ba cơ chế giữ nó:
 
-1. **Seize chỉ đúng một thiết bị.** Chuột và bàn phím vật lý đi đường riêng, TouchBridge
+1. **Seize chỉ đúng một thiết bị.** Chuột và bàn phím vật lý đi đường riêng, Touchward
    không hề chạm vào.
 2. **Event tap chỉ quan sát.** `CursorReturn` dùng `.listenOnly` — không sửa, không nuốt
    sự kiện nào. Nó chỉ để biết anh có đang cầm chuột không.
-3. **Đóng dấu nguồn sự kiện.** Mọi sự kiện TouchBridge tạo ra mang một marker trong
+3. **Đóng dấu nguồn sự kiện.** Mọi sự kiện Touchward tạo ra mang một marker trong
    `eventSourceUserData`, nên phân biệt được với chuột thật mà không cần đoán.
 
 Cộng thêm `localEventsSuppressionInterval = 0`: nếu thiếu dòng này, mỗi lần trả con trỏ
@@ -116,7 +116,7 @@ hạn 2 giây: nếu luồng report chết giữa lúc kéo, nút được nhả
 ## Giới hạn đã biết
 
 - **Ô mật khẩu không gõ được bằng bàn phím ảo.** Khi Secure Input bật, macOS chặn phím
-  tổng hợp trên toàn hệ thống. Đây là thiết kế bảo mật, không có đường vòng. TouchBridge
+  tổng hợp trên toàn hệ thống. Đây là thiết kế bảo mật, không có đường vòng. Touchward
   phát hiện và hiện chữ "dùng bàn phím thật" thay vì im lặng nuốt phím.
 - **App có cây Accessibility kém** (Qt, Java, Flutter, game) sẽ không kích hoạt bàn phím
   tự động. Electron/Chromium được xử lý bằng `AXManualAccessibility`.

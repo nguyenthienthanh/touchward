@@ -1,4 +1,6 @@
 .build/
+dist/
 build/
+dist/
 *.xcodeproj
 .DS_Store

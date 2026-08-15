@@ -4,11 +4,33 @@ import CoreGraphics
 import Foundation
 import IOKit.hid
 
-// TouchBridge — makes a USB touchscreen behave like an absolute pointing device on macOS,
+// Touchward — makes a USB touchscreen behave like an absolute pointing device on macOS,
 // without touching the physical mouse and keyboard paths.
 
+/// Logs to stderr and to a file. The file matters: the app must be launched via `open` so
+/// macOS assigns it its own TCC identity, and that detaches it from any terminal.
+private let logFile: URL = {
+    let dir = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent("Library/Logs", isDirectory: true)
+    // Named after the bundle rather than a literal, so renaming the app in one config
+    // file cannot leave the log writing under the old name.
+    let name = (Bundle.main.infoDictionary?["CFBundleName"] as? String)
+        ?? ProcessInfo.processInfo.processName
+    return dir.appendingPathComponent("\(name).log")
+}()
+
 func log(_ message: String) {
-    FileHandle.standardError.write((message + "\n").data(using: .utf8)!)
+    let stamped = "[\(ISO8601DateFormatter().string(from: Date()))] \(message)\n"
+    FileHandle.standardError.write(stamped.data(using: .utf8)!)
+
+    guard let data = stamped.data(using: .utf8) else { return }
+    if let handle = try? FileHandle(forWritingTo: logFile) {
+        defer { try? handle.close() }
+        _ = try? handle.seekToEnd()
+        try? handle.write(contentsOf: data)
+    } else {
+        try? data.write(to: logFile)
+    }
 }
 
 // MARK: permissions
@@ -119,7 +141,7 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
 
         setUpKeyboard()
-        log("▶️  TouchBridge đang chạy. Ctrl-C để thoát.")
+        log("▶️  Touchward đang chạy. Ctrl-C để thoát.")
     }
 
     /// A held drag must not survive the process. Ctrl-C is the documented way to quit, and

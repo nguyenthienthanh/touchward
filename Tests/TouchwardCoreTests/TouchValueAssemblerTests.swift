@@ -1,5 +1,5 @@
 import XCTest
-@testable import TouchBridgeCore
+@testable import TouchwardCore
 
 /// The assembler exists so nothing in this project has to know a report's byte layout.
 /// These tests feed it the (usage, value) stream IOKit produces from the device's own

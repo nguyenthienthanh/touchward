@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import TouchBridgeCore
+@testable import TouchwardCore
 
 /// Tests written to kill specific mutations that the original suite let through.
 /// A mutation audit found 22 of 25 deliberate faults survived — including deleting the

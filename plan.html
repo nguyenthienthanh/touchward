@@ -345,7 +345,7 @@
 
   <div class="note info" style="margin-top:4px">
     <h4>Trạng thái · 14/08/2026</h4>
-    <p><b>Đã triển khai theo phương án B.</b> Mã nguồn ở <code>~/Projects/Personal/touchbridge/</code> — Swift package tách lõi thuần (parse report, map toạ độ, state machine cử chỉ, <b>44 unit test xanh</b>, chạy không cần quyền TCC) khỏi tầng hệ thống (IOKit, CGEvent, AppKit). Bàn phím ảo tự viết vì Accessibility Keyboard của macOS không bật/tắt được bằng code, không ghim được vào màn hình chỉ định và không tự hiện theo focus.</p>
+    <p><b>Đã triển khai theo phương án B.</b> Mã nguồn ở <code>~/Projects/Personal/touchward/</code> — Swift package tách lõi thuần (parse report, map toạ độ, state machine cử chỉ, <b>44 unit test xanh</b>, chạy không cần quyền TCC) khỏi tầng hệ thống (IOKit, CGEvent, AppKit). Bàn phím ảo tự viết vì Accessibility Keyboard của macOS không bật/tắt được bằng code, không ghim được vào màn hình chỉ định và không tự hiện theo focus.</p>
     <p>Một vòng review độc lập đã chạy và bắt được lỗi nghiêm trọng nhất: <b>không có cleanup khi thoát</b>, nên Ctrl-C giữa lúc đang kéo sẽ để nút chuột trái kẹt ở trạng thái nhấn trên toàn hệ thống. Đã bịt cả bốn đường thoát. Còn lại: chạy thật vẫn chờ bạn cấp Accessibility + Input Monitoring.</p>
   </div>
 </header>
@@ -756,7 +756,7 @@ IOHIDManagerOpen -> 0xe00002e2       <span class="c">// kIOReturnNotPermitted</s
       <div class="phase-n">00</div>
       <div class="phase-body">
         <strong>Xác nhận thiết bị gửi report nào</strong>
-        <p>Cấp Input Monitoring cho Terminal, chạy <code>hiddump</code> đã có sẵn trong <code>~/Projects/Personal/touchbridge/</code>, chạm màn. Bạn sẽ thấy report ID thực tế đang tới — 0x91 hay 0x03. Câu trả lời quyết định bạn có cần gửi feature report bật multitouch hay không. Đây là 15 phút loại bỏ mọi phỏng đoán còn lại.</p>
+        <p>Cấp Input Monitoring cho Terminal, chạy <code>hiddump</code> đã có sẵn trong <code>~/Projects/Personal/touchward/</code>, chạm màn. Bạn sẽ thấy report ID thực tế đang tới — 0x91 hay 0x03. Câu trả lời quyết định bạn có cần gửi feature report bật multitouch hay không. Đây là 15 phút loại bỏ mọi phỏng đoán còn lại.</p>
       </div>
     </div>
     <div class="phase">
@@ -838,7 +838,7 @@ IOHIDManagerOpen -> 0xe00002e2       <span class="c">// kIOReturnNotPermitted</s
 
 <footer>
   <div>Phần cứng và toạ độ trong tài liệu này được đọc trực tiếp từ máy của bạn ngày 14/08/2026 — không phải giá trị mẫu.</div>
-  <div>Công cụ chẩn đoán: <code>~/Projects/Personal/touchbridge/hiddump.swift</code></div>
+  <div>Công cụ chẩn đoán: <code>~/Projects/Personal/touchward/hiddump.swift</code></div>
 </footer>
 
 </div>

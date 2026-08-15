@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import TouchBridgeCore
+@testable import TouchwardCore
 
 private func frame(_ points: [(UInt8, CGFloat, CGFloat)], at time: TimeInterval) -> MappedFrame {
     MappedFrame(

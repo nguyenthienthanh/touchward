@@ -1,6 +1,6 @@
 import CoreGraphics
 import Foundation
-import TouchBridgeCore
+import TouchwardCore
 
 /// Wires the pure core to the system layer: bytes in, pointer events out.
 final class TouchPipeline {

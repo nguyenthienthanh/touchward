@@ -1,6 +1,6 @@
 import CoreGraphics
 import XCTest
-@testable import TouchBridgeCore
+@testable import TouchwardCore
 
 /// The real geometry on this machine: the touchscreen sits to the LEFT of the main
 /// display, so its global origin is negative. Every assertion here exists to stop a

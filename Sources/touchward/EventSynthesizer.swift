@@ -1,6 +1,6 @@
 import CoreGraphics
 import Foundation
-import TouchBridgeCore
+import TouchwardCore
 
 /// Posts synthetic pointer events on behalf of the touchscreen.
 ///

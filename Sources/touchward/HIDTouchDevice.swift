@@ -1,7 +1,7 @@
 import Foundation
 import IOKit
 import IOKit.hid
-import TouchBridgeCore
+import TouchwardCore
 
 /// What the panel says about itself. Every field is read from the device's own HID
 /// elements — nothing here is a constant copied off one machine.
