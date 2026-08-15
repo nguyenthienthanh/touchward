@@ -16,6 +16,7 @@ Entirely user-space: **no kernel extension, no SIP changes.**
 |---|---|
 | Point, tap, drag | One finger, absolute — the cursor goes where you touch |
 | Scroll | Two fingers, both axes |
+| Zoom | Three fingers, spread or pinch |
 | Type | An on-screen keyboard, iPad layout, on the touch panel itself |
 | Your real mouse and keyboard | Never touched. See [Hands off the real input devices](#hands-off-the-real-input-devices) |
 
@@ -140,7 +141,7 @@ bash scripts/make-dmg.sh           # Artifacts/Touchward-1.0.0.dmg
 ### Running the tests
 
 ```bash
-swift test                         # 70 tests, no permissions required
+swift test                         # 80 tests, no permissions required
 ```
 
 `TouchwardCore` is pure logic with no IOKit and no AppKit, precisely so the parsing,
@@ -180,12 +181,21 @@ tccutil reset All com.ethannguyen.touchward
 | Hold > 0.6 s | Right click |
 | One finger, drag | Drag — selects text, moves things |
 | Two fingers, drag | Scroll, both axes |
+| Three fingers, spread or pinch | Zoom in / out |
 | Two fingers, quick tap | Right click |
 | Touch a text field on the panel | On-screen keyboard appears on the touch panel |
 | Lift every finger | After ~0.5 s the cursor returns to the main display |
 
 Scrolling inverted for you? Flip `contentFollowsFinger` in `EventSynthesizer.swift` — that
 is the only place polarity is decided.
+
+**Zoom is three fingers, not two,** because two fingers are already scrolling. Each ~10% of
+opening or closing sends one Command + `=` / Command + `-`, which is what View ▸ Zoom In /
+Zoom Out is bound to in nearly every Mac app. There is no public API for a real
+magnification gesture; Command + scroll would aim at the window under your fingers, but in
+an app that does not implement it the zoom would scroll the document instead. A zoom
+keystroke an app does not implement does nothing at all. The trade-off: **zoom goes to the
+focused app**, so tap the window first if it is not already frontmost.
 
 ## On-screen keyboard
 
@@ -208,7 +218,7 @@ return ends the home row, shift sits at both ends of the bottom letter row, and 
 Split deliberately, so the logic is verifiable without system permissions:
 
 ```
-TouchwardCore/          ← pure functions, 70 unit tests, `swift test` needs no TCC grants
+TouchwardCore/          ← pure functions, 80 unit tests, `swift test` needs no TCC grants
   TouchValueAssembler     builds frames from decoded (usage, value) pairs — no byte offsets
   SlotTracker             per-finger state for multitouch reports
   PalmFilter              threshold scaled to the device's own range, not a constant
@@ -321,6 +331,8 @@ Things that cannot be automated because they depend on hardware and TCC:
 - [ ] Touch all four corners → off by no more than a few millimetres
 - [ ] Hold for one second → the context menu opens at the touched point
 - [ ] Two-finger drag in a browser → the page scrolls, in the right direction
+- [ ] Three fingers spread in a browser → the page zooms in; pinch → out
+- [ ] Three fingers slid across the panel without opening → nothing zooms and nothing scrolls
 - [ ] One-finger drag across a paragraph → text is selected
 - [ ] Lift your hand, wait a second → the cursor returns to the main display
 - [ ] **Touch the panel while moving the real mouse → the mouse does not stutter or get hijacked**
