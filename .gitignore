@@ -4,3 +4,6 @@ build/
 dist/
 *.xcodeproj
 .DS_Store
+
+# Dữ liệu phiên làm việc của Claude Code: prompt, log, metrics — không thuộc về repo công khai.
+.claude/
