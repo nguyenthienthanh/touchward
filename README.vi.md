@@ -2,6 +2,12 @@
 
 [🇬🇧 English](README.md) · **Tiếng Việt**
 
+[![release](https://img.shields.io/github/v/release/nguyenthienthanh/touchward)](https://github.com/nguyenthienthanh/touchward/releases/latest)
+[![npm](https://img.shields.io/npm/v/touchward)](https://www.npmjs.com/package/touchward)
+[![Homebrew](https://img.shields.io/badge/homebrew-nguyenthienthanh%2Ftap-orange)](https://github.com/nguyenthienthanh/homebrew-tap)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-black)](#yêu-cầu)
+[![license](https://img.shields.io/github/license/nguyenthienthanh/touchward)](LICENSE)
+
 Biến màn hình cảm ứng USB thành thiết bị trỏ **tuyệt đối** trên macOS.
 
 macOS không có driver dịch toạ độ HID digitizer thành vị trí con trỏ. Với màn hình

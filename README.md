@@ -2,6 +2,12 @@
 
 **English** · [🇻🇳 Tiếng Việt](README.vi.md)
 
+[![release](https://img.shields.io/github/v/release/nguyenthienthanh/touchward)](https://github.com/nguyenthienthanh/touchward/releases/latest)
+[![npm](https://img.shields.io/npm/v/touchward)](https://www.npmjs.com/package/touchward)
+[![Homebrew](https://img.shields.io/badge/homebrew-nguyenthienthanh%2Ftap-orange)](https://github.com/nguyenthienthanh/homebrew-tap)
+[![macOS](https://img.shields.io/badge/macOS-13%2B-black)](#requirements)
+[![license](https://img.shields.io/github/license/nguyenthienthanh/touchward)](LICENSE)
+
 Turns a USB touchscreen into an **absolute** pointing device on macOS.
 
 macOS has no driver that translates HID digitizer coordinates into a pointer position. On a
