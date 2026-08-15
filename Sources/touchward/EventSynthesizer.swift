@@ -48,7 +48,12 @@ final class EventSynthesizer {
         case .dragEnded(let p):
             releaseLeft(at: p)
 
-        case .scroll(let dx, let dy, _):
+        case .scroll(let dx, let dy, let centre):
+            // A scroll wheel event carries no location: macOS delivers it to whatever sits
+            // under the *pointer*. Two fingers never moved the pointer, so every scroll was
+            // being delivered to whatever window the cursor happened to be resting on —
+            // usually on the other display, which reads as "scrolling does nothing".
+            moveCursor(to: centre)
             postScroll(dx: dx, dy: dy)
 
         case .sessionEnded:
@@ -56,6 +61,9 @@ final class EventSynthesizer {
             // wrong direction on its first frame.
             residualX = 0
             residualY = 0
+            // The cursor is about to be warped home by CursorReturn, so a remembered
+            // position from this session would suppress a needed move in the next one.
+            lastCursorPoint = nil
         }
     }
 
@@ -68,6 +76,16 @@ final class EventSynthesizer {
 
     func releaseLeft(at point: CGPoint) {
         post(.leftMouseUp, at: point, button: .left)
+    }
+
+    /// Parks the pointer without pressing anything, so a location-less event (the scroll
+    /// wheel) is routed to the window the fingers are actually on.
+    private var lastCursorPoint: CGPoint?
+
+    private func moveCursor(to point: CGPoint) {
+        guard lastCursorPoint != point else { return }
+        lastCursorPoint = point
+        post(.mouseMoved, at: point, button: .left)
     }
 
     private func post(_ type: CGEventType, at point: CGPoint, button: CGMouseButton) {

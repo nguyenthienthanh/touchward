@@ -18,3 +18,9 @@ PRODUCT="touchward"
 
 # Where finished artefacts land. Not the SwiftPM build directory.
 OUT_DIR="Artifacts"
+
+# Stable signing identity. TCC remembers Accessibility against the app's designated
+# requirement; with an ad-hoc signature that includes the binary hash, so every rebuild
+# looked like a brand new app and the grant was lost. A certificate keeps it constant.
+# Create it once with scripts/make-signing-cert.sh. Empty falls back to ad-hoc.
+SIGNING_IDENTITY="Touchward Local Signing"

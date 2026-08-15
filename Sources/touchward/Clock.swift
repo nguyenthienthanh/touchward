@@ -10,4 +10,20 @@ enum Clock {
     static func now() -> TimeInterval {
         ProcessInfo.processInfo.systemUptime
     }
+
+    private static let timebase: mach_timebase_info_data_t = {
+        var info = mach_timebase_info_data_t()
+        mach_timebase_info(&info)
+        return info
+    }()
+
+    /// Converts a HID value's own timestamp into the same monotonic seconds `now()` uses.
+    ///
+    /// Every value in one input report carries an identical timestamp, which is what lets
+    /// the frame assembler tell one report from the next. Reading the clock per value
+    /// instead would make every single value look like a new report.
+    static func seconds(machTime: UInt64) -> TimeInterval {
+        let nanos = Double(machTime) * Double(timebase.numer) / Double(timebase.denom)
+        return nanos / 1_000_000_000
+    }
 }
