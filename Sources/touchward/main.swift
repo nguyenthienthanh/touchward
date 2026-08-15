@@ -35,22 +35,56 @@ func log(_ message: String) {
 
 // MARK: permissions
 
-/// Both grants are TCC prompts. Neither needs SIP disabled or a kernel extension.
-func ensurePermissions() -> Bool {
-    var ok = true
-
-    if !AXIsProcessTrustedWithOptions([kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary) {
-        log("⚠️  Thiếu quyền Accessibility — cần để bắn sự kiện chuột/phím và đọc focus.")
-        ok = false
+/// Reads the two TCC grants this app needs.
+///
+/// Both requests must happen *after* the app is running its event loop. macOS presents
+/// these dialogs on behalf of a live process; asking from a bare `main` and exiting a
+/// moment later means tccd has nothing to attach the dialog to and the user is never
+/// asked at all.
+enum Permissions {
+    static var accessibilityGranted: Bool {
+        AXIsProcessTrusted()
     }
 
-    if IOHIDCheckAccess(kIOHIDRequestTypeListenEvent) != kIOHIDAccessTypeGranted {
+    static var inputMonitoring: IOHIDAccessType {
+        IOHIDCheckAccess(kIOHIDRequestTypeListenEvent)
+    }
+
+    static var inputMonitoringGranted: Bool {
+        inputMonitoring == kIOHIDAccessTypeGranted
+    }
+
+    static var allGranted: Bool {
+        accessibilityGranted && inputMonitoringGranted
+    }
+
+    /// Triggers both system dialogs. Safe to call once only — repeating it re-opens the
+    /// Accessibility alert on every poll.
+    static func request() {
+        _ = AXIsProcessTrustedWithOptions(
+            [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
         IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
-        log("⚠️  Thiếu quyền Input Monitoring — cần để đọc màn cảm ứng.")
-        ok = false
     }
 
-    return ok
+    /// Only the Accessibility pane. Granting it also satisfies input monitoring, and the
+    /// app never appears in the Input Monitoring list — sending the user there to hunt for
+    /// a checkbox that will never exist is worse than not opening anything.
+    static func openSettings() {
+        if let url = URL(string:
+            "x-apple.systempreferences:com.apple.preference.security?Privacy_Accessibility") {
+            NSWorkspace.shared.open(url)
+        }
+    }
+
+    static func describe() -> String {
+        let hid: String
+        switch inputMonitoring {
+        case kIOHIDAccessTypeGranted: hid = "đã cấp"
+        case kIOHIDAccessTypeDenied: hid = "BỊ TỪ CHỐI"
+        default: hid = "chưa hỏi"
+        }
+        return "Accessibility: \(accessibilityGranted ? "đã cấp" : "chưa cấp") · Input Monitoring: \(hid)"
+    }
 }
 
 // MARK: wiring
@@ -69,7 +103,108 @@ final class AppController: NSObject, NSApplicationDelegate {
     private var hasShutDown = false
     private var lastFocusWasSecureField = false
 
+    private var permissionPoll: Timer?
+    private var hasRequestedPermissions = false
+
     func applicationDidFinishLaunching(_ notification: Notification) {
+        log("▶️  Touchward khởi động. \(Permissions.describe())")
+
+        // Accessibility is asked for up front: its prompt is cheap and non-blocking.
+        if !Permissions.accessibilityGranted {
+            _ = AXIsProcessTrustedWithOptions(
+                [kAXTrustedCheckOptionPrompt.takeUnretainedValue(): true] as CFDictionary)
+        }
+
+        requestInputMonitoringThenBegin()
+    }
+
+    /// Order matters more than anything else in this file.
+    ///
+    /// Opening a HID device without permission does not raise a prompt — it silently
+    /// records a *denial*, and macOS never asks twice. So the open attempt must not happen
+    /// until access has been asked for and granted, or the app burns its one chance to ask
+    /// and the user is left with a permission they were never offered.
+    private func requestInputMonitoringThenBegin() {
+        switch Permissions.inputMonitoring {
+        case kIOHIDAccessTypeGranted:
+            begin()
+
+        case kIOHIDAccessTypeDenied:
+            log("""
+                ⚠️  Quyền theo dõi thiết bị nhập đang bị từ chối, macOS sẽ không hỏi lại.
+                    Cách sửa: bật Accessibility cho Touchward — quyền đó bao trùm luôn
+                    việc đọc màn cảm ứng, nên app KHÔNG cần xuất hiện trong danh sách
+                    Input Monitoring.
+                      System Settings → Privacy & Security → Accessibility
+                    Nếu vẫn kẹt, xoá trạng thái cũ rồi mở lại app:
+                      tccutil reset All com.ethannguyen.touchward
+                """)
+            Permissions.openSettings()
+            pollUntilGranted()
+
+        default:
+            log("⏳ Đang xin quyền Input Monitoring…")
+            // An accessory app is never frontmost, and macOS declines to raise a TCC
+            // dialog on behalf of a process the user is not looking at. Become a regular
+            // app just long enough to be asked, then drop back so nothing steals focus
+            // from the app being typed into.
+            NSApp.setActivationPolicy(.regular)
+            NSApp.activate(ignoringOtherApps: true)
+            // IOHIDRequestAccess blocks until the user answers. On the main thread it would
+            // freeze the very run loop the dialog is drawn on, and TCC records a denial.
+            DispatchQueue.global(qos: .userInitiated).async {
+                let granted = IOHIDRequestAccess(kIOHIDRequestTypeListenEvent)
+                DispatchQueue.main.async {
+                    NSApp.setActivationPolicy(.accessory)
+                    log("   Kết quả: \(granted ? "đã cấp" : "chưa cấp")")
+                    if granted {
+                        self.begin()
+                    } else {
+                        Permissions.openSettings()
+                        self.pollUntilGranted()
+                    }
+                }
+            }
+        }
+    }
+
+    /// Waits for the grant to appear rather than quitting, so the user does not have to
+    /// find and relaunch the app after ticking a checkbox.
+    private func pollUntilGranted() {
+        guard permissionPoll == nil else { return }
+
+        log("""
+
+            Bật Touchward ở đây rồi app tự chạy tiếp:
+              System Settings → Privacy & Security → Accessibility
+
+            Accessibility bao trùm cả việc đọc màn cảm ứng, nên Touchward sẽ KHÔNG
+            hiện trong danh sách Input Monitoring — đó là bình thường.
+            """)
+
+        let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
+            guard let self, Permissions.allGranted else { return }
+            self.permissionPoll?.invalidate()
+            self.permissionPoll = nil
+            // TCC hands an already-running process a stale answer for HID access, so a
+            // clean relaunch is the only reliable way to pick up a fresh grant.
+            log("✅ Đã có đủ quyền — khởi động lại để áp dụng.")
+            self.relaunch()
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        permissionPoll = timer
+    }
+
+    private func relaunch() {
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.createsNewApplicationInstance = true
+        NSWorkspace.shared.openApplication(at: Bundle.main.bundleURL,
+                                           configuration: configuration) { _, _ in
+            exit(0)
+        }
+    }
+
+    private func begin() {
         guard let touchDisplay = DisplayRegistry.touchDisplay(),
               let mainDisplay = DisplayRegistry.mainDisplay() else {
             log("""
@@ -245,16 +380,6 @@ final class AppController: NSObject, NSApplicationDelegate {
 }
 
 // MARK: entry point
-
-guard ensurePermissions() else {
-    log("""
-
-    Cấp quyền rồi chạy lại:
-      System Settings → Privacy & Security → Accessibility
-      System Settings → Privacy & Security → Input Monitoring
-    """)
-    exit(1)
-}
 
 let app = NSApplication.shared
 app.setActivationPolicy(.accessory)  // no Dock icon, nothing to steal focus

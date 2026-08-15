@@ -21,8 +21,11 @@ System Settings → Privacy & Security:
 
 | Quyền | Dùng để |
 |---|---|
-| **Input Monitoring** | Mở và giành (seize) thiết bị HID |
-| **Accessibility** | Bắn sự kiện chuột/phím, đọc phần tử đang focus |
+| **Accessibility** | Điều khiển con trỏ, gõ phím, đọc phần tử đang focus — **và đọc luôn màn cảm ứng** |
+
+> Chỉ cần bật **một** quyền này. Accessibility bao trùm luôn quyền theo dõi thiết bị nhập,
+> nên Touchward sẽ **không xuất hiện** trong danh sách Input Monitoring. Đó là bình thường,
+> đừng đi tìm ô đánh dấu ở đó.
 
 Muốn xem log thì chạy thẳng binary thay vì `open`:
 

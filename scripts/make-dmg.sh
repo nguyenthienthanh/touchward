@@ -29,14 +29,15 @@ CÀI ĐẶT
   Kéo ${APP_NAME} vào thư mục Applications bên cạnh.
 
 LẦN ĐẦU CHẠY
-  macOS sẽ hỏi hai quyền. Thiếu một trong hai thì app không chạy được:
+  macOS sẽ hỏi quyền Accessibility. Thiếu nó thì app không chạy được:
 
-    • Input Monitoring  — để đọc màn hình cảm ứng
-    • Accessibility     — để điều khiển con trỏ và bàn phím
+    • Accessibility — để điều khiển con trỏ, gõ phím, và đọc màn cảm ứng
 
   Nếu không thấy hộp thoại, bật tay ở:
-    System Settings → Privacy & Security → Input Monitoring
     System Settings → Privacy & Security → Accessibility
+
+  Quyền này bao trùm luôn việc đọc thiết bị nhập, nên app sẽ KHÔNG hiện
+  trong danh sách Input Monitoring — đừng đi tìm ở đó.
 
   Cả hai quyền chỉ dùng cho màn cảm ứng. Chuột và bàn phím thật không bị đụng tới.
 
