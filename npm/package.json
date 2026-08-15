@@ -1,0 +1,51 @@
+{
+  "name": "touchward",
+  "version": "1.0.0",
+  "description": "Installer for Touchward — turns a USB touchscreen into an absolute pointing device on macOS. Point, drag, two-finger scroll, three-finger zoom and an on-screen keyboard, without a kernel extension.",
+  "type": "module",
+  "bin": {
+    "touchward": "bin/touchward.js"
+  },
+  "files": [
+    "bin",
+    "release.json"
+  ],
+  "keywords": [
+    "macos",
+    "touchscreen",
+    "touch-screen",
+    "hid",
+    "digitizer",
+    "multitouch",
+    "pointing-device",
+    "on-screen-keyboard",
+    "accessibility",
+    "usb",
+    "iokit",
+    "installer"
+  ],
+  "os": [
+    "darwin"
+  ],
+  "engines": {
+    "node": ">=18"
+  },
+  "license": "Apache-2.0",
+  "author": {
+    "name": "Nguyen Thien Thanh",
+    "email": "nguyenthienthanh.kiyoshi@gmail.com",
+    "url": "https://github.com/nguyenthienthanh"
+  },
+  "homepage": "https://github.com/nguyenthienthanh/touchward#readme",
+  "bugs": {
+    "url": "https://github.com/nguyenthienthanh/touchward/issues"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/nguyenthienthanh/touchward.git",
+    "directory": "npm"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}

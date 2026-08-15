@@ -128,6 +128,46 @@ says so in the log, and comes up by itself when the panel does.
 
 ---
 
+## Install
+
+Three ways to the same signed `.app`. Pick whichever you already have to hand — or
+[build it yourself](#build-and-run).
+
+### Disk image
+
+[**Download Touchward 1.0.0**](https://github.com/nguyenthienthanh/touchward/releases/latest)
+→ open the `.dmg` → drag **Touchward** into Applications.
+
+### Homebrew
+
+```bash
+brew install --cask nguyenthienthanh/tap/touchward
+```
+
+### npm
+
+```bash
+npx touchward install
+```
+
+The npm package is an *installer*, not the app: it fetches the disk image from the release
+above, checks it against a pinned checksum, and copies the bundle into `/Applications`.
+Installing is an explicit command rather than a `postinstall` hook, because dropping an app
+into `/Applications` as a side effect of `npm install` is not something a package should do
+behind your back. `npx touchward uninstall` takes it back out.
+
+### Then grant the one permission
+
+However you installed it, Touchward does nothing until you enable it under
+**System Settings → Privacy & Security → Accessibility**. That single grant also covers
+reading the touch panel, so Touchward will **not** appear under Input Monitoring — that is
+expected, and [explained below](#permissions).
+
+The app is signed with a self-signed certificate, so Gatekeeper asks for confirmation the
+first time you open it.
+
+---
+
 ## Build and run
 
 Four commands, in order. Run them from the repository root.

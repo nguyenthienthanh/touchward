@@ -125,6 +125,44 @@ sàng.
 
 ---
 
+## Cài đặt
+
+Ba đường tới cùng một bản `.app` đã ký. Chọn đường nào tiện nhất — hoặc
+[tự build](#build-và-chạy).
+
+### Tải ảnh đĩa
+
+[**Tải Touchward 1.0.0**](https://github.com/nguyenthienthanh/touchward/releases/latest)
+→ mở file `.dmg` → kéo **Touchward** vào Applications.
+
+### Homebrew
+
+```bash
+brew install --cask nguyenthienthanh/tap/touchward
+```
+
+### npm
+
+```bash
+npx touchward install
+```
+
+Gói npm là **trình cài**, không phải app: nó tải ảnh đĩa từ bản phát hành ở trên, đối chiếu
+checksum đã ghim sẵn, rồi chép bundle vào `/Applications`. Việc cài là một lệnh gõ rõ ràng
+chứ không phải hook `postinstall` — một gói npm không nên tự đặt app vào `/Applications`
+sau lưng người dùng. Gỡ ra bằng `npx touchward uninstall`.
+
+### Rồi cấp đúng một quyền
+
+Cài kiểu nào cũng vậy: Touchward không làm gì cho tới khi anh bật nó ở
+**System Settings → Privacy & Security → Accessibility**. Quyền này bao luôn việc đọc màn
+cảm ứng, nên Touchward sẽ **không** xuất hiện trong Input Monitoring — đó là bình thường,
+[giải thích ở mục Quyền](#quyền).
+
+App ký bằng chứng chỉ tự ký, nên lần mở đầu tiên Gatekeeper sẽ hỏi xác nhận.
+
+---
+
 ## Build và chạy
 
 Bốn lệnh, theo thứ tự. Chạy từ thư mục gốc của repo.
