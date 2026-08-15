@@ -95,7 +95,7 @@ final class KeyboardView: NSView {
 
     /// Shown when macOS blocks synthetic keys. Saying so beats keys that quietly do nothing.
     func setSecureInputWarning(_ visible: Bool) {
-        notice.stringValue = visible ? "Ô mật khẩu — dùng bàn phím thật" : ""
+        notice.stringValue = visible ? "Password field — use the physical keyboard" : ""
         notice.isHidden = !visible
         buttons.forEach { $0.isEnabled = !visible }
     }
@@ -161,7 +161,7 @@ final class KeyboardView: NSView {
         return [
             toggle,
             Key(.tab, width: 1, label: "⇥"),
-            Key(.character(plain: " ", shifted: " "), width: 5.5, label: "dấu cách"),
+            Key(.character(plain: " ", shifted: " "), width: 5.5, label: "space"),
             toggle,
             Key(.hide, width: 1.5, label: "⌨︎↓"),
         ]

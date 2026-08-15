@@ -17,14 +17,14 @@ source scripts/appconfig.sh
 CERT_NAME="${SIGNING_IDENTITY:-Touchward Local Signing}"
 
 if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
-  echo "✓ Đã có chứng chỉ \"$CERT_NAME\" — không cần tạo lại."
+  echo "✓ Certificate \"$CERT_NAME\" already exists — nothing to do."
   exit 0
 fi
 
 WORK="$(mktemp -d)"
 trap 'rm -rf "$WORK"' EXIT
 
-echo "▸ Tạo chứng chỉ tự ký \"$CERT_NAME\"…"
+echo "▸ Creating self-signed certificate \"$CERT_NAME\"…"
 openssl req -x509 -newkey rsa:2048 -nodes -days 3650 \
   -keyout "$WORK/key.pem" -out "$WORK/cert.pem" \
   -subj "/CN=${CERT_NAME}" \
@@ -41,27 +41,27 @@ openssl pkcs12 -export -out "$WORK/cert.p12" \
   -keypbe PBE-SHA1-3DES -certpbe PBE-SHA1-3DES -macalg sha1 \
   -passout pass:touchward 2>/dev/null
 
-echo "▸ Nạp vào login keychain…"
+echo "▸ Importing into the login keychain…"
 # -T /usr/bin/codesign lets codesign use the key without a prompt on every build.
 security import "$WORK/cert.p12" \
   -k "$HOME/Library/Keychains/login.keychain-db" \
   -P "touchward" -T /usr/bin/codesign -A >/dev/null
 
-echo "▸ Đánh dấu tin cậy cho việc ký mã…"
+echo "▸ Marking it trusted for code signing…"
 # User trust domain: no admin password needed, and it only affects this account.
 security add-trusted-cert \
   -r trustRoot -p codeSign \
   -k "$HOME/Library/Keychains/login.keychain-db" \
   "$WORK/cert.pem" 2>/dev/null || {
-    echo "  ⚠️  Không tự đặt được tin cậy. Mở Keychain Access → tìm \"$CERT_NAME\""
+    echo "  ⚠️  Could not set trust automatically. Open Keychain Access → find \"$CERT_NAME\""
     echo "     → Get Info → Trust → Code Signing: Always Trust."
   }
 
 echo
 if security find-identity -v -p codesigning | grep -q "$CERT_NAME"; then
-  echo "✓ Xong. Từ giờ build lại KHÔNG làm mất quyền đã cấp."
-  echo "  Đặt SIGNING_IDENTITY=\"$CERT_NAME\" trong scripts/appconfig.sh"
+  echo "✓ Done. Rebuilding will no longer cost you the permissions you granted."
+  echo "  Set SIGNING_IDENTITY=\"$CERT_NAME\" in scripts/appconfig.sh"
 else
-  echo "✗ Chứng chỉ chưa dùng ký được — kiểm tra bước tin cậy ở trên."
+  echo "✗ The certificate cannot sign yet — check the trust step above."
   exit 1
 fi

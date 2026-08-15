@@ -13,15 +13,15 @@ CONFIG="${1:-release}"
 APP="${OUT_DIR}/${APP_NAME}.app"
 CONTENTS="${APP}/Contents"
 
-echo "▸ Biên dịch (${CONFIG})…"
+echo "▸ Compiling (${CONFIG})…"
 swift build -c "$CONFIG"
 
 BIN="$(swift build -c "$CONFIG" --show-bin-path)/${PRODUCT}"
-[ -f "$BIN" ] || { echo "✗ Không thấy binary tại $BIN"; exit 1; }
+[ -f "$BIN" ] || { echo "✗ No binary at $BIN"; exit 1; }
 
 # Regenerate the icon so it can never drift from the code that draws it.
 if [ ! -f Resources/AppIcon.icns ] || [ scripts/makeicon.swift -nt Resources/AppIcon.icns ]; then
-  echo "▸ Vẽ icon…"
+  echo "▸ Drawing the icon…"
   ICONTOOL="$(mktemp -d)/makeicon"
   swiftc -O scripts/makeicon.swift -o "$ICONTOOL"
   rm -rf Resources/AppIcon.iconset
@@ -29,7 +29,7 @@ if [ ! -f Resources/AppIcon.icns ] || [ scripts/makeicon.swift -nt Resources/App
   iconutil -c icns Resources/AppIcon.iconset -o Resources/AppIcon.icns
 fi
 
-echo "▸ Dựng ${APP}…"
+echo "▸ Assembling ${APP}…"
 rm -rf "$APP"
 mkdir -p "${CONTENTS}/MacOS" "${CONTENTS}/Resources"
 
@@ -62,9 +62,9 @@ echo "</plist>" >> "${CONTENTS}/Info.plist"
 
 IDENTITY="${SIGNING_IDENTITY:-}"
 if [ -n "$IDENTITY" ] && security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
-  echo "▸ Ký bằng \"$IDENTITY\"…"
+  echo "▸ Signing with \"$IDENTITY\"…"
 else
-  echo "▸ Ký ad-hoc (chưa có chứng chỉ — chạy scripts/make-signing-cert.sh để quyền không mất mỗi lần build)…"
+  echo "▸ Signing ad-hoc (no certificate yet — run scripts/make-signing-cert.sh so TCC grants survive a rebuild)…"
   IDENTITY="-"
 fi
 
@@ -72,6 +72,6 @@ codesign --force --deep --sign "$IDENTITY" \
          --identifier "${BUNDLE_ID}" \
          --options runtime --timestamp=none "$APP" 2>&1 | sed 's/^/  /'
 
-codesign --verify --strict "$APP" && echo "  chữ ký hợp lệ"
+codesign --verify --strict "$APP" && echo "  signature is valid"
 
 echo "✓ ${APP}"

@@ -12,32 +12,32 @@ source scripts/appconfig.sh
 APP="${OUT_DIR}/${APP_NAME}.app"
 TARGET="/Applications/${APP_NAME}.app"
 
-[ -d "$APP" ] || { echo "✗ Chưa có $APP — chạy scripts/build-app.sh trước"; exit 1; }
+[ -d "$APP" ] || { echo "✗ No $APP yet — run scripts/build-app.sh first"; exit 1; }
 
 if pgrep -f "${APP_NAME}" >/dev/null 2>&1; then
-  echo "▸ Đang chạy — tắt trước khi thay thế…"
+  echo "▸ Already running — quitting it before replacing…"
   pkill -f "${APP_NAME}" || true
   sleep 1
 fi
 
 if [ -d "$TARGET" ]; then
-  echo "▸ Gỡ bản cũ ở ${TARGET}…"
+  echo "▸ Removing the old copy at ${TARGET}…"
   rm -rf "$TARGET"
 fi
 
-echo "▸ Cài vào ${TARGET}…"
+echo "▸ Installing into ${TARGET}…"
 if ! cp -R "$APP" "$TARGET" 2>/dev/null; then
-  echo "  cần quyền quản trị để ghi vào /Applications"
+  echo "  administrator rights are needed to write to /Applications"
   sudo cp -R "$APP" "$TARGET"
 fi
 
 echo
-echo "✓ Đã cài ${APP_NAME} ${VERSION}"
+echo "✓ Installed ${APP_NAME} ${VERSION}"
 echo
-echo "Chạy:  open -a \"${APP_NAME}\""
+echo "Run:   open -a \"${APP_NAME}\""
 echo "Log:   tail -f ~/Library/Logs/${APP_NAME}.log"
-echo "Tắt:   pkill -f ${APP_NAME}"
+echo "Quit:  pkill -f ${APP_NAME}"
 echo
-echo "Lần đầu chạy cần cấp hai quyền (thiếu một là app thoát ngay):"
+echo "The first run needs permission (the app waits until it is granted):"
 echo "  System Settings → Privacy & Security → Input Monitoring → ${APP_NAME}"
 echo "  System Settings → Privacy & Security → Accessibility    → ${APP_NAME}"

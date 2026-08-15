@@ -86,7 +86,7 @@ final class HIDTouchDevice {
         // If a panel splits its collections across several interfaces, the one carrying
         // Input Mode may not be the one we opened — worth knowing before blaming the write.
         if found.count > 1 {
-            log("ℹ️  Có \(found.count) thiết bị khai báo Digitizer/Touch Screen; đang dùng cái đầu tiên.")
+            log("ℹ️  \(found.count) devices declare Digitizer/Touch Screen; using the first.")
         }
 
         guard let profile = attach(device) else { return .failure(.unreadableDescriptor) }
@@ -223,7 +223,7 @@ final class HIDTouchDevice {
         }
 
         if !tipSwitches.isEmpty {
-            log("   Đã lập bản đồ \(tipSwitches.count) khe ngón tay từ descriptor.")
+            log("   Mapped \(tipSwitches.count) finger slots from the descriptor.")
         }
     }
 
@@ -234,7 +234,7 @@ final class HIDTouchDevice {
 
         valuesSeen += 1
         if valuesSeen == 1 {
-            log("📥 Nhận được dữ liệu đầu tiên từ màn cảm ứng.")
+            log("📥 First data received from the touchscreen.")
         }
 
         // Bounded trace of exactly what the panel sends. Guessing at the report shape is
@@ -314,7 +314,7 @@ final class HIDTouchDevice {
             let detail = frame.contacts
                 .map { "id=\($0.id) (\($0.x),\($0.y))" }
                 .joined(separator: " ")
-            log("👆 Frame \(framesEmitted): \(frame.contacts.count) điểm chạm \(detail)")
+            log("👆 Frame \(framesEmitted): \(frame.contacts.count) contacts \(detail)")
         }
         onFrame?(frame)
     }
@@ -330,12 +330,12 @@ final class HIDTouchDevice {
     /// answers is logged.
     private func switchToMultitouch(_ device: IOHIDDevice, reportID: UInt8?) {
         guard let element = inputModeElement(device) else {
-            log("ℹ️  Panel không có Input Mode trong descriptor — không thể yêu cầu multitouch.")
+            log("ℹ️  The panel has no Input Mode in its descriptor — multitouch cannot be requested.")
             return
         }
 
         let before = readInputMode(device, element: element)
-        log("   Input Mode hiện tại: \(before.map(String.init) ?? "không đọc được")")
+        log("   Input Mode currently reads: \(before.map(String.init) ?? "unreadable")")
         if before == 2 {
             inputModeSet = true
             return
@@ -348,7 +348,7 @@ final class HIDTouchDevice {
            IOHIDDeviceSetValue(device, element, value) == kIOReturnSuccess,
            readInputMode(device, element: element) == 2 {
             inputModeSet = true
-            log("✅ Đã bật multitouch qua element Input Mode.")
+            log("✅ Multitouch enabled through the Input Mode element.")
             return
         }
 
@@ -359,14 +359,14 @@ final class HIDTouchDevice {
         if setInputModeByReport(device, reportID: reportID),
            readInputMode(device, element: element) == 2 {
             inputModeSet = true
-            log("✅ Đã bật multitouch qua feature report \(reportID).")
+            log("✅ Multitouch enabled through feature report \(reportID).")
             return
         }
 
         log("""
-            ⚠️  Panel từ chối chuyển sang multitouch (Input Mode vẫn là \
+            ⚠️  The panel refused to switch to multitouch (Input Mode still reads \
             \(readInputMode(device, element: element).map(String.init) ?? "?")).
-                Chỉ có 1 điểm chạm, nên cuộn hai ngón không thể hoạt động.
+                Only one contact is available, so two-finger scrolling cannot work.
             """)
     }
 
@@ -401,7 +401,7 @@ final class HIDTouchDevice {
         if IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(reportID),
                                 &buffer, &length) == kIOReturnSuccess, length > 0 {
             buffer = Array(buffer.prefix(Int(length)))
-            log("   Feature report \(reportID) đọc về: \(buffer.map { String(format: "%02X", $0) }.joined(separator: " "))")
+            log("   Feature report \(reportID) reads back: \(buffer.map { String(format: "%02X", $0) }.joined(separator: " "))")
         } else {
             buffer = [0, 0]
         }
@@ -460,15 +460,16 @@ final class HIDTouchDevice {
             switch self {
             case .managerOpenFailed(let code) where code == kIOReturnNotPermitted:
                 return """
-                Không mở được thiết bị HID: thiếu quyền Input Monitoring.
-                Mở System Settings → Privacy & Security → Input Monitoring và bật cho app này.
+                Cannot open the HID device: Input Monitoring is not granted.
+                Open System Settings → Privacy & Security → Input Monitoring and enable it
+                for this app.
                 """
             case .managerOpenFailed(let code):
-                return "Không mở được IOHIDManager (mã \(String(format: "0x%08x", code)))."
+                return "Could not open IOHIDManager (code \(String(format: "0x%08x", code)))."
             case .deviceNotFound:
-                return "Không thấy thiết bị nào khai báo là Digitizer/Touch Screen. Kiểm tra cáp USB."
+                return "No device declares itself a Digitizer/Touch Screen. Check the USB cable."
             case .unreadableDescriptor:
-                return "Thiết bị không khai báo dải toạ độ X/Y — không map cảm ứng bằng cách đoán."
+                return "The device declares no X/Y range — touch is never mapped by guesswork."
             }
         }
     }

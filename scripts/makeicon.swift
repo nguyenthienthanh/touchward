@@ -158,4 +158,4 @@ for variant in variants {
 }
 
 if failures > 0 { exit(1) }
-print("✓ \(variants.count) ảnh → \(outputDirectory.path)")
+print("✓ \(variants.count) images → \(outputDirectory.path)")
