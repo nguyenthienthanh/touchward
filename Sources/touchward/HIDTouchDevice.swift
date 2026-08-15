@@ -115,6 +115,7 @@ final class HIDTouchDevice {
 
         guard let profile = readProfile(device) else { return nil }
         switchToMultitouch(device, reportID: profile.inputModeReportID)
+        mapFingerElements(device)
 
         IOHIDDeviceRegisterInputValueCallback(device, { context, _, _, value in
             guard let context else { return }
@@ -170,6 +171,62 @@ final class HIDTouchDevice {
                              productName: name)
     }
 
+    /// Which finger collection each element belongs to, keyed by the cookie IOKit stamps
+    /// on it. Built once from the descriptor.
+    ///
+    /// Order of arrival cannot identify a finger: the panel re-sends only what changed, so
+    /// a report where finger 2 moved and finger 1 did not carries a single pair of
+    /// coordinates with nothing to say whose they are. The cookie says.
+    private var fingerFields: [IOHIDElementCookie: (slot: Int, field: SlotTracker.Field)] = [:]
+    private var tracker = SlotTracker()
+    private var pendingSlotTime: TimeInterval?
+    private var slotFlush: Timer?
+
+    private func mapFingerElements(_ device: IOHIDDevice) {
+        guard let elements = IOHIDDeviceCopyMatchingElements(device, nil, 0) as? [IOHIDElement] else {
+            return
+        }
+
+        // A finger is a collection containing a tip switch; the slot is that collection's
+        // position in the descriptor. Nothing here counts fingers or assumes a layout.
+        let tipSwitches = elements.filter {
+            IOHIDElementGetType($0) != kIOHIDElementTypeFeature
+                && Int(IOHIDElementGetUsagePage($0)) == Usage.Page.digitizer
+                && Int(IOHIDElementGetUsage($0)) == Usage.tipSwitch
+        }
+
+        for (slot, tipSwitch) in tipSwitches.enumerated() {
+            guard let collection = IOHIDElementGetParent(tipSwitch),
+                  let children = IOHIDElementGetChildren(collection) as? [IOHIDElement] else {
+                fingerFields[IOHIDElementGetCookie(tipSwitch)] = (slot, .tip)
+                continue
+            }
+
+            for child in children {
+                let page = Int(IOHIDElementGetUsagePage(child))
+                let usage = Int(IOHIDElementGetUsage(child))
+                let field: SlotTracker.Field?
+                switch (page, usage) {
+                case (Usage.Page.digitizer, Usage.tipSwitch): field = .tip
+                case (Usage.Page.digitizer, Usage.confidence): field = .confidence
+                case (Usage.Page.digitizer, Usage.contactIdentifier): field = .id
+                case (Usage.Page.digitizer, Usage.width): field = .width
+                case (Usage.Page.digitizer, Usage.height): field = .height
+                case (Usage.Page.genericDesktop, Usage.x): field = .x
+                case (Usage.Page.genericDesktop, Usage.y): field = .y
+                default: field = nil
+                }
+                if let field {
+                    fingerFields[IOHIDElementGetCookie(child)] = (slot, field)
+                }
+            }
+        }
+
+        if !tipSwitches.isEmpty {
+            log("   Đã lập bản đồ \(tipSwitches.count) khe ngón tay từ descriptor.")
+        }
+    }
+
     private func handle(_ value: IOHIDValue) {
         let element = IOHIDValueGetElement(value)
         let page = Int(IOHIDElementGetUsagePage(element))
@@ -202,17 +259,64 @@ final class HIDTouchDevice {
         // it, and that shared value is exactly how a report boundary is detected.
         let time = Clock.seconds(machTime: IOHIDValueGetTimeStamp(value))
 
+        // A finger element: the panel is speaking real multitouch, and every finger's state
+        // is held per slot rather than rebuilt from whatever this one report mentioned.
+        if let target = fingerFields[IOHIDElementGetCookie(element)] {
+            if let pending = pendingSlotTime, pending != time {
+                emitSlotFrame(at: pending)
+            }
+            pendingSlotTime = time
+            tracker.update(slot: target.slot, field: target.field, value: integer)
+            scheduleSlotFlush()
+            return
+        }
+
+        // Contact count closes a digitizer report — but only when it changes, which it does
+        // not while two fingers rest mid-scroll. The flush timer covers that case.
+        if page == Usage.Page.digitizer, usage == Usage.contactCount, pendingSlotTime != nil {
+            emitSlotFrame(at: time)
+            return
+        }
+
+        // Nothing mapped: the panel is still in mouse-compatibility mode, where a single
+        // contact is inferred from button 1 and the last coordinates seen.
+        guard fingerFields.isEmpty || page != Usage.Page.digitizer else { return }
+
         if let frame = assembler.accept(usagePage: page, usage: usage,
                                         value: integer, time: time) {
-            framesEmitted += 1
-            if framesEmitted <= 12 {
-                let detail = frame.contacts
-                    .map { "id=\($0.id) (\($0.x),\($0.y))" }
-                    .joined(separator: " ")
-                log("👆 Frame \(framesEmitted): \(frame.contacts.count) điểm chạm \(detail)")
-            }
-            onFrame?(frame)
+            deliver(frame)
         }
+    }
+
+    /// The last report of a gesture — every finger up — changes tip switches and then the
+    /// device goes quiet. Without this, that final report would sit unflushed and the touch
+    /// would never end.
+    private func scheduleSlotFlush() {
+        slotFlush?.invalidate()
+        let timer = Timer(timeInterval: 0.025, repeats: false) { [weak self] _ in
+            guard let self, let pending = self.pendingSlotTime else { return }
+            self.emitSlotFrame(at: pending)
+        }
+        RunLoop.main.add(timer, forMode: .common)
+        slotFlush = timer
+    }
+
+    private func emitSlotFrame(at time: TimeInterval) {
+        pendingSlotTime = nil
+        slotFlush?.invalidate()
+        slotFlush = nil
+        deliver(tracker.frame(at: time))
+    }
+
+    private func deliver(_ frame: TouchFrame) {
+        framesEmitted += 1
+        if framesEmitted <= 12 || frame.contacts.count >= 2 && framesEmitted <= 60 {
+            let detail = frame.contacts
+                .map { "id=\($0.id) (\($0.x),\($0.y))" }
+                .joined(separator: " ")
+            log("👆 Frame \(framesEmitted): \(frame.contacts.count) điểm chạm \(detail)")
+        }
+        onFrame?(frame)
     }
 
     /// Windows writes Input Mode to move the controller out of its mouse-compatibility
@@ -322,6 +426,13 @@ final class HIDTouchDevice {
 
     /// Unschedules, closes and frees everything. Safe to call twice.
     func stop() {
+        slotFlush?.invalidate()
+        slotFlush = nil
+        pendingSlotTime = nil
+        // The panel will never send the tip-switch release once it is gone; without this
+        // the next session would start with phantom fingers still down.
+        tracker.releaseAll()
+
         for (index, device) in devices.enumerated() {
             IOHIDDeviceRegisterInputValueCallback(device, nil, nil)
             IOHIDDeviceUnscheduleFromRunLoop(device, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
