@@ -10,6 +10,9 @@ final class FocusWatcher {
     struct Focus: Equatable {
         var isTextInput: Bool
         var isSecureField: Bool
+        /// Where the field is, in the global top-left-origin space CGDisplayBounds uses.
+        /// Nil when the app will not say — some apps expose no geometry at all.
+        var bounds: CGRect?
     }
 
     /// The last state handed to the caller. Focus is polled as well as observed, and
@@ -64,7 +67,7 @@ final class FocusWatcher {
         guard AXObserverCreate(pid, callback, &newObserver) == .success, let created = newObserver else {
             // Failing silently would strand a visible keyboard over an app that cannot
             // report focus at all.
-            report(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
 
@@ -100,7 +103,7 @@ final class FocusWatcher {
 
     private func reportCurrentFocus() {
         guard let app = observedApp else {
-            report(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
 
@@ -108,14 +111,14 @@ final class FocusWatcher {
         guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let element = focused
         else {
-            report(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
 
         // A misbehaving app can return something other than an element here. A force cast
         // would trap and take the touch driver down with it.
         guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
-            report(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false, bounds: nil))
             return
         }
         let target = element as! AXUIElement
@@ -129,7 +132,43 @@ final class FocusWatcher {
         ]
         let isSecure = subrole == (kAXSecureTextFieldSubrole as String)
 
-        report(Focus(isTextInput: role.map(textRoles.contains) ?? false, isSecureField: isSecure))
+        report(Focus(isTextInput: role.map(textRoles.contains) ?? false,
+                     isSecureField: isSecure,
+                     bounds: bounds(of: target) ?? focusedWindowBounds(app)))
+    }
+
+    /// The field's own rectangle. AX reports it in the same global, top-left-origin space
+    /// as `CGDisplayBounds`, so it can be tested against a display without conversion.
+    private func bounds(of element: AXUIElement) -> CGRect? {
+        var position = CGPoint.zero
+        var size = CGSize.zero
+        guard read(element, kAXPositionAttribute, .cgPoint, &position),
+              read(element, kAXSizeAttribute, .cgSize, &size) else { return nil }
+        return CGRect(origin: position, size: size)
+    }
+
+    /// Fallback for apps that give the focused element no geometry — a web view's inner
+    /// field often has none, but the window it lives in always does.
+    private func focusedWindowBounds(_ app: AXUIElement) -> CGRect? {
+        var window: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(app, kAXFocusedWindowAttribute as CFString, &window) == .success,
+              let window, CFGetTypeID(window) == AXUIElementGetTypeID() else { return nil }
+        return bounds(of: window as! AXUIElement)
+    }
+
+    /// An app can answer with something that is not an `AXValue` at all; unwrapping that
+    /// with a force cast would trap and take the touch driver down with it.
+    private func axValue(_ element: AXUIElement, _ attribute: String) -> AXValue? {
+        var raw: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(element, attribute as CFString, &raw) == .success,
+              let raw, CFGetTypeID(raw) == AXValueGetTypeID() else { return nil }
+        return (raw as! AXValue)
+    }
+
+    private func read(_ element: AXUIElement, _ attribute: String,
+                      _ type: AXValueType, _ into: UnsafeMutableRawPointer) -> Bool {
+        guard let value = axValue(element, attribute) else { return false }
+        return AXValueGetValue(value, type, into)
     }
 
     private func report(_ focus: Focus) {

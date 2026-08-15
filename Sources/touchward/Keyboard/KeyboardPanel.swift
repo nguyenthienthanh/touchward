@@ -29,16 +29,47 @@ final class KeyboardPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle, .fullScreenAuxiliary]
     }
 
+    /// The screen the keyboard was last shown on, so minimising and restoring do not have
+    /// to resolve the display again — and cannot land the panel on the wrong one.
+    private var host: NSScreen?
+    private(set) var isMinimized = false
+
     /// Places the keyboard along the bottom of a specific screen and shows it without
     /// activating this app.
     func present(on screen: NSScreen, heightFraction: CGFloat = 0.42) {
-        let frame = screen.frame
-        let height = (frame.height * heightFraction).rounded()
-        setFrame(
-            NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: height),
-            display: true
-        )
+        host = screen
+        self.heightFraction = heightFraction
+        applyGeometry()
         orderFrontRegardless()
+    }
+
+    private var heightFraction: CGFloat = 0.42
+
+    /// Shrinks the keyboard to a small tab, or brings it back. The tab is deliberately left
+    /// on screen rather than hidden: a keyboard that vanished with no way back would strand
+    /// the user on a machine whose physical keyboard may be out of reach.
+    func setMinimized(_ minimized: Bool) {
+        isMinimized = minimized
+        applyGeometry()
+        orderFrontRegardless()
+    }
+
+    private func applyGeometry() {
+        guard let screen = host else { return }
+        let frame = screen.frame
+
+        if isMinimized {
+            let size = NSSize(width: 190, height: 58)
+            let margin: CGFloat = 18
+            setFrame(NSRect(x: frame.maxX - size.width - margin,
+                            y: frame.minY + margin,
+                            width: size.width, height: size.height),
+                     display: true)
+        } else {
+            let height = (frame.height * heightFraction).rounded()
+            setFrame(NSRect(x: frame.minX, y: frame.minY, width: frame.width, height: height),
+                     display: true)
+        }
     }
 
     func dismiss() {

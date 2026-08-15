@@ -97,7 +97,7 @@ final class AppController: NSObject, NSApplicationDelegate {
 
     private var pipeline: TouchPipeline?
     private var panel: KeyboardPanel?
-    private var keyboardView: KeyboardView?
+    private var surface: KeyboardSurface?
     private var touchDisplayID: CGDirectDisplayID?
     private var secureInputPoll: Timer?
     private var hasShutDown = false
@@ -358,12 +358,21 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     private func setUpKeyboard() {
-        let view = KeyboardView(injector: injector)
+        let surface = KeyboardSurface(injector: injector)
         let panel = KeyboardPanel(contentRect: NSRect(x: 0, y: 0, width: 800, height: 300))
-        panel.contentView = view
+        panel.contentView = surface
 
         self.panel = panel
-        self.keyboardView = view
+        self.surface = surface
+
+        surface.onMinimizeRequest = { [weak panel, weak surface] in
+            surface?.setMinimized(true)
+            panel?.setMinimized(true)
+        }
+        surface.onRestoreRequest = { [weak panel, weak surface] in
+            surface?.setMinimized(false)
+            panel?.setMinimized(false)
+        }
 
         // Touches landing on the keyboard bypass gesture classification entirely.
         pipeline?.directTouchRegion = { [weak panel] in
@@ -372,11 +381,11 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
         // The key is driven straight from the touch point. Synthesizing a click instead
         // would move the pointer onto the keyboard on every keystroke.
-        pipeline?.pressKey = { [weak view] point in
-            view?.pressKey(atGlobalPoint: point) ?? false
+        pipeline?.pressKey = { [weak surface] point in
+            surface?.pressKey(atGlobalPoint: point) ?? false
         }
-        pipeline?.releaseKey = { [weak view] in
-            view?.releaseKey()
+        pipeline?.releaseKey = { [weak surface] in
+            surface?.releaseKey()
         }
 
         focusWatcher.start { [weak self] focus in
@@ -395,11 +404,30 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard let displayID = self.touchDisplayID,
                   let screen = NSScreen.matching(displayID: displayID) else { return }
 
+            // A field on the other display is typed into with the real keyboard sitting in
+            // front of it. Throwing an on-screen keyboard onto the touch panel for it is
+            // pure noise — this is why focusing a chat on the main display used to raise it.
+            guard self.isOnTouchDisplay(focus.bounds, displayID: displayID) else {
+                panel.dismiss()
+                self.stopSecureInputPolling()
+                return
+            }
+
             self.lastFocusWasSecureField = focus.isSecureField
-            view.setSecureInputWarning(focus.isSecureField || self.injector.isSecureInputActive)
+            surface.setSecureInputWarning(focus.isSecureField || self.injector.isSecureInputActive)
             panel.present(on: screen)
             self.startSecureInputPolling()
         }
+    }
+
+    /// True when the focused field actually lives on the touchscreen.
+    ///
+    /// An app that reports no geometry at all gets the benefit of the doubt: refusing to
+    /// show the keyboard there would break typing on the panel with no way for the user to
+    /// tell why, which is worse than the keyboard occasionally appearing unasked.
+    private func isOnTouchDisplay(_ bounds: CGRect?, displayID: CGDirectDisplayID) -> Bool {
+        guard let bounds, !bounds.isEmpty else { return true }
+        return CGDisplayBounds(displayID).intersects(bounds)
     }
 
     /// Secure input has no notification, so poll while the keyboard is on screen.
@@ -412,7 +440,7 @@ final class AppController: NSObject, NSApplicationDelegate {
             guard let self else { return }
             // The AX subrole ("this is a password field") and the system flag ("synthetic
             // keys are blocked right now") are different facts and routinely disagree.
-            self.keyboardView?.setSecureInputWarning(
+            self.surface?.setSecureInputWarning(
                 self.lastFocusWasSecureField || self.injector.isSecureInputActive)
             self.focusWatcher.refresh()
         }
