@@ -274,12 +274,14 @@ final class AppController: NSObject, NSApplicationDelegate {
             log(device.isSeized
                 ? "✅ Đã giành thiết bị cảm ứng (seize) — macOS thôi tự sinh click."
                 : "⚠️  Không seize được thiết bị; macOS có thể vẫn sinh click ma tại con trỏ.")
-            // Deliberately not phrased as success: the panel accepted this report last
-            // time and went on sending mouse reports anyway. What mode it is really in is
-            // reported below, from the usages that actually arrive.
-            log(device.inputModeSet
-                ? "↪︎ Đã gửi lệnh bật multitouch (chưa chắc panel nghe theo)."
-                : "ℹ️  Panel không nhận lệnh đổi chế độ nhập.")
+            // `inputModeSet` now means the device read back mode 2, not merely that a
+            // write returned success — the details are logged where the switch happens.
+            if !device.inputModeSet {
+                log("""
+                    ℹ️  Panel đang ở mouse mode: chỉ báo 1 điểm chạm.
+                        Trỏ, chạm và kéo vẫn chạy; cuộn hai ngón thì không.
+                    """)
+            }
         case .failure(let error):
             log("❌ \(error.description)")
             exit(1)
@@ -401,15 +403,22 @@ final class AppController: NSObject, NSApplicationDelegate {
     }
 
     /// Secure input has no notification, so poll while the keyboard is on screen.
+    /// Focus is re-read on the same tick: plenty of apps drop focus out of a text field
+    /// without emitting any AX notification, and a keyboard that will not go away covers
+    /// the bottom of the screen with no way to dismiss it.
     private func startSecureInputPolling() {
         guard secureInputPoll == nil else { return }
-        secureInputPoll = Timer.scheduledTimer(withTimeInterval: 0.75, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 0.5, repeats: true) { [weak self] _ in
             guard let self else { return }
             // The AX subrole ("this is a password field") and the system flag ("synthetic
             // keys are blocked right now") are different facts and routinely disagree.
             self.keyboardView?.setSecureInputWarning(
                 self.lastFocusWasSecureField || self.injector.isSecureInputActive)
+            self.focusWatcher.refresh()
         }
+        // Common mode, so the poll keeps running while a key is being held.
+        RunLoop.main.add(timer, forMode: .common)
+        secureInputPoll = timer
     }
 
     private func stopSecureInputPolling() {

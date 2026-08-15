@@ -132,6 +132,76 @@ final class TouchValueAssemblerTests: XCTestCase {
         let frame = try XCTUnwrap(endReport(&a, count: 1, at: 10.0))
         XCTAssertEqual(frame.contacts.map(\.id), [4])
     }
+
+    // MARK: mouse-compatibility mode
+    //
+    // Transcribed from a real SiS panel that never left mouse mode: X/Y on the generic
+    // desktop page, button 1 on press and release, and nothing else. IOKit only calls
+    // back for values that changed, so a sliding finger sends one axis at a time.
+
+    private func mouse(_ a: inout TouchValueAssembler,
+                       x: Int? = nil, y: Int? = nil, button: Int? = nil,
+                       at time: TimeInterval) -> [TouchFrame] {
+        var out: [TouchFrame] = []
+        func push(_ page: Int, _ usage: Int, _ value: Int) {
+            if let frame = a.accept(usagePage: page, usage: usage, value: value, time: time) {
+                out.append(frame)
+            }
+        }
+        if let y { push(Usage.Page.genericDesktop, Usage.y, y) }
+        if let x { push(Usage.Page.genericDesktop, Usage.x, x) }
+        if let button { push(Usage.Page.button, Usage.primaryButton, button) }
+        return out
+    }
+
+    func testMouseModeButtonMakesTheContact() throws {
+        var a = TouchValueAssembler()
+        let frames = mouse(&a, x: 1343, y: 1798, button: 1, at: 1.0)
+
+        let frame = try XCTUnwrap(frames.last)
+        XCTAssertEqual(frame.contacts.count, 1)
+        XCTAssertEqual(frame.contacts.first?.x, 1343)
+        XCTAssertEqual(frame.contacts.first?.y, 1798)
+    }
+
+    /// The defect this mode was failing on: a finger sliding with the button held sends
+    /// only the axis that moved, and every one of those reports used to come out as a
+    /// frame with zero contacts — a lift, not a drag.
+    func testFingerStaysDownWhileOnlyOneAxisMoves() throws {
+        var a = TouchValueAssembler()
+        _ = mouse(&a, x: 1256, y: 1905, button: 1, at: 1.0)
+
+        _ = mouse(&a, x: 1255, at: 1.1)
+        let moved = try XCTUnwrap(mouse(&a, x: 1254, at: 1.2).first)
+
+        XCTAssertEqual(moved.contacts.count, 1, "the button is still held — this is a drag")
+        XCTAssertEqual(moved.contacts.first?.x, 1255)
+        XCTAssertEqual(moved.contacts.first?.y, 1905, "Y never changed, so it never arrives again")
+    }
+
+    func testMouseModeReleaseEndsTheTouch() throws {
+        var a = TouchValueAssembler()
+        _ = mouse(&a, x: 10, y: 20, button: 1, at: 1.0)
+
+        let frame = try XCTUnwrap(mouse(&a, button: 0, at: 1.1).last)
+        XCTAssertTrue(frame.contacts.isEmpty, "the lift must reach the recognizer")
+    }
+
+    /// A panel that speaks real digitizer must never have its fingers doubled by the
+    /// fallback, even if it also emits mouse-compatibility reports.
+    func testDigitizerReportsWinOverMouseMode() throws {
+        var a = TouchValueAssembler()
+        _ = mouse(&a, x: 10, y: 20, button: 1, at: 1.0)
+
+        _ = sendFinger(&a, id: 2, x: 500, y: 600, at: 2.0)
+        let digitizer = try XCTUnwrap(endReport(&a, count: 1, at: 2.0))
+        XCTAssertEqual(digitizer.contacts.map(\.id), [2])
+
+        _ = a.accept(usagePage: Usage.Page.digitizer, usage: Usage.tipSwitch, value: 0, time: 3.0)
+        let lifted = try XCTUnwrap(endReport(&a, count: 0, at: 3.0))
+        XCTAssertTrue(lifted.contacts.isEmpty,
+                      "tip switch up ends the touch; the held mouse button must not revive it")
+    }
 }
 
 final class PalmFilterTests: XCTestCase {
