@@ -54,6 +54,61 @@ final class KeyboardView: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
+    // MARK: touch driving
+
+    /// The key a finger is currently resting on, so the release knows what to un-highlight.
+    private weak var touchedButton: NSButton?
+
+    /// Presses whatever key sits under a point in the global, top-left-origin space that
+    /// CGEvent and the touch mapper use. Returns true when a key was hit.
+    ///
+    /// Driving the button directly, rather than synthesizing a click at that point, is the
+    /// whole reason typing no longer drags the pointer onto the touchscreen: a synthetic
+    /// `leftMouseDown` *is* a cursor move, so every keystroke used to yank the cursor off
+    /// the main display and leave it parked on the keyboard.
+    @discardableResult
+    func pressKey(atGlobalPoint point: CGPoint) -> Bool {
+        releaseKey()
+        guard let button = button(atGlobalPoint: point), button.isEnabled else { return false }
+
+        touchedButton = button
+        button.highlight(true)
+        // Fire on touch-down. On glass there is no way to slide off a key and cancel, and
+        // waiting for the lift makes every keystroke feel late.
+        if let action = button.action {
+            NSApp.sendAction(action, to: button.target, from: button)
+        }
+        return true
+    }
+
+    /// The finger left the glass (or the keyboard). Only clears the highlight — the key
+    /// already fired on the way down.
+    func releaseKey() {
+        touchedButton?.highlight(false)
+        touchedButton = nil
+    }
+
+    private func button(atGlobalPoint point: CGPoint) -> NSButton? {
+        guard let window, let primary = NSScreen.screens.first else { return nil }
+
+        // Global CG space is top-left origin; AppKit's screen space is bottom-left.
+        let screenPoint = NSPoint(x: point.x, y: primary.frame.maxY - point.y)
+        let windowPoint = window.convertPoint(fromScreen: screenPoint)
+        // `hitTest` takes a point in the *superview's* space. As the panel's content view
+        // this view has no superview, and window space is then the same space; the map
+        // keeps it correct if it is ever nested.
+        let hitPoint = superview.map { $0.convert(windowPoint, from: nil) } ?? windowPoint
+
+        // hitTest lands on whatever is topmost — for a bezelled button that is often an
+        // inner cell view, so walk up to the button itself.
+        var candidate = hitTest(hitPoint)
+        while let view = candidate {
+            if let button = view as? NSButton { return button }
+            candidate = view.superview
+        }
+        return nil
+    }
+
     /// Shown when macOS blocks synthetic keys. Saying so beats keys that quietly do nothing.
     func setSecureInputWarning(_ visible: Bool) {
         notice.stringValue = visible ? "Ô mật khẩu — dùng bàn phím thật" : ""

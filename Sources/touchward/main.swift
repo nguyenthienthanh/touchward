@@ -168,8 +168,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         }
     }
 
-    /// Waits for the grant to appear rather than quitting, so the user does not have to
-    /// find and relaunch the app after ticking a checkbox.
+    /// Waits for the grant rather than quitting, so the user does not have to find and
+    /// relaunch the app after ticking a checkbox.
+    ///
+    /// Only Accessibility is watched. The HID answer is cached per process and cannot
+    /// change while this one runs — waiting for it here is the same deadlock as trying to
+    /// open the device before asking: a condition that can never become true. Accessibility
+    /// is both the thing the user can actually toggle and, once granted, the thing that
+    /// makes the HID access succeed after a relaunch.
     private func pollUntilGranted() {
         guard permissionPoll == nil else { return }
 
@@ -182,17 +188,39 @@ final class AppController: NSObject, NSApplicationDelegate {
             hiện trong danh sách Input Monitoring — đó là bình thường.
             """)
 
+        var ticks = 0
         let timer = Timer(timeInterval: 1.5, repeats: true) { [weak self] _ in
-            guard let self, Permissions.allGranted else { return }
+            guard let self else { return }
+
+            guard Permissions.accessibilityGranted else {
+                // Say so periodically: a silent log is indistinguishable from a crash,
+                // which is exactly how this looked the first time it happened.
+                ticks += 1
+                if ticks % 20 == 0 {
+                    log("… vẫn đang chờ cấp quyền. \(Permissions.describe())")
+                }
+                return
+            }
+
             self.permissionPoll?.invalidate()
             self.permissionPoll = nil
-            // TCC hands an already-running process a stale answer for HID access, so a
-            // clean relaunch is the only reliable way to pick up a fresh grant.
-            log("✅ Đã có đủ quyền — khởi động lại để áp dụng.")
+            log("✅ Accessibility đã cấp — khởi động lại để áp dụng.")
             self.relaunch()
         }
         RunLoop.main.add(timer, forMode: .common)
         permissionPoll = timer
+    }
+
+    /// Clicking the app again while it is already running does nothing visible, because it
+    /// is an agent with no window — it looks like a crash. Use the reopen as a nudge to
+    /// re-check and report where things stand.
+    func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows: Bool) -> Bool {
+        log("↻ Mở lại. \(Permissions.describe())")
+        if Permissions.accessibilityGranted && !Permissions.inputMonitoringGranted {
+            log("   Quyền đã có nhưng tiến trình này giữ câu trả lời cũ — khởi động lại.")
+            relaunch()
+        }
+        return true
     }
 
     private func relaunch() {
@@ -246,9 +274,12 @@ final class AppController: NSObject, NSApplicationDelegate {
             log(device.isSeized
                 ? "✅ Đã giành thiết bị cảm ứng (seize) — macOS thôi tự sinh click."
                 : "⚠️  Không seize được thiết bị; macOS có thể vẫn sinh click ma tại con trỏ.")
+            // Deliberately not phrased as success: the panel accepted this report last
+            // time and went on sending mouse reports anyway. What mode it is really in is
+            // reported below, from the usages that actually arrive.
             log(device.inputModeSet
-                ? "✅ Đã chuyển sang chế độ multitouch."
-                : "ℹ️  Không đổi được chế độ nhập; nếu chỉ nhận 1 điểm chạm thì panel đang ở mouse mode.")
+                ? "↪︎ Đã gửi lệnh bật multitouch (chưa chắc panel nghe theo)."
+                : "ℹ️  Panel không nhận lệnh đổi chế độ nhập.")
         case .failure(let error):
             log("❌ \(error.description)")
             exit(1)
@@ -336,6 +367,14 @@ final class AppController: NSObject, NSApplicationDelegate {
         pipeline?.directTouchRegion = { [weak panel] in
             guard let panel, panel.isVisible else { return nil }
             return panel.cgFrame
+        }
+        // The key is driven straight from the touch point. Synthesizing a click instead
+        // would move the pointer onto the keyboard on every keystroke.
+        pipeline?.pressKey = { [weak view] point in
+            view?.pressKey(atGlobalPoint: point) ?? false
+        }
+        pipeline?.releaseKey = { [weak view] in
+            view?.releaseKey()
         }
 
         focusWatcher.start { [weak self] focus in

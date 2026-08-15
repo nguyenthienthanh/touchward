@@ -32,6 +32,9 @@ final class HIDTouchDevice {
     private var onFrame: ((TouchFrame) -> Void)?
 
     private(set) var isSeized = false
+    private(set) var seizedInterfaces = 0
+    private var valuesSeen = 0
+    private var framesEmitted = 0
     private(set) var inputModeSet = false
     private(set) var profile: DeviceProfile?
 
@@ -51,12 +54,23 @@ final class HIDTouchDevice {
             kIOHIDDeviceUsageKey: Usage.touchScreen,
         ] as CFDictionary)
 
-        let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        guard opened == kIOReturnSuccess else { return .failure(.managerOpenFailed(opened)) }
-
+        // Enumerate WITHOUT opening the manager.
+        //
+        // IOHIDManagerOpen opens every matched device shared, through the same user
+        // client. A later IOHIDDeviceOpen(…Seize) on that same client hits IOKit's
+        // "multiple opens" guard, which returns success but never records the seize — so
+        // the device stays shared, macOS keeps driving the pointer from it, and the log
+        // cheerfully reports a seize that never happened. Matching alone is enough to
+        // enumerate; the one and only open is the seize below.
         guard let found = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
               let device = found.first else {
-            return .failure(.deviceNotFound)
+            let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
+            guard opened == kIOReturnSuccess else { return .failure(.managerOpenFailed(opened)) }
+            guard let retry = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
+                  let device = retry.first else { return .failure(.deviceNotFound) }
+            guard let profile = attach(device) else { return .failure(.unreadableDescriptor) }
+            self.profile = profile
+            return .success(profile)
         }
 
         IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, _ in
@@ -73,13 +87,18 @@ final class HIDTouchDevice {
         return .success(profile)
     }
 
+    /// This panel publishes a single IOHIDDevice carrying every top-level collection —
+    /// digitizer, mouse, and device configuration alike. Because the seize is recorded on
+    /// the IOHIDDevice and gates all of its interface nubs, one correct seize silences the
+    /// mouse collection too; there are no siblings to chase.
     private func attach(_ device: IOHIDDevice) -> DeviceProfile? {
         var options = IOOptionBits(kIOHIDOptionsTypeSeizeDevice)
         if IOHIDDeviceOpen(device, options) == kIOReturnSuccess {
             isSeized = true
         } else {
-            // A shared open still lets us read; the caller is told that macOS will keep
-            // producing its own phantom clicks.
+            // Close before retrying: a second open from the same client is discarded by
+            // IOKit, so reopening without closing would silently keep the failed state.
+            IOHIDDeviceClose(device, options)
             options = IOOptionBits(kIOHIDOptionsTypeNone)
             guard IOHIDDeviceOpen(device, options) == kIOReturnSuccess else { return nil }
         }
@@ -149,8 +168,33 @@ final class HIDTouchDevice {
         let page = Int(IOHIDElementGetUsagePage(element))
         let usage = Int(IOHIDElementGetUsage(element))
 
+        valuesSeen += 1
+        if valuesSeen == 1 {
+            log("📥 Nhận được dữ liệu đầu tiên từ màn cảm ứng.")
+        }
+
+        // Bounded trace of exactly what the panel sends. Guessing at the report shape is
+        // what produced the last two bugs; this shows it instead.
+        if valuesSeen <= 40 {
+            log(String(format: "   [%02d] page=0x%02X usage=0x%02X value=%d",
+                       valuesSeen, page, usage, IOHIDValueGetIntegerValue(value)))
+        }
+
+        let integer = IOHIDValueGetIntegerValue(value)
+
+        // The value's own timestamp, not the wall clock: all values from one report share
+        // it, and that shared value is exactly how a report boundary is detected.
+        let time = Clock.seconds(machTime: IOHIDValueGetTimeStamp(value))
+
         if let frame = assembler.accept(usagePage: page, usage: usage,
-                                        value: IOHIDValueGetIntegerValue(value), time: Clock.now()) {
+                                        value: integer, time: time) {
+            framesEmitted += 1
+            if framesEmitted <= 12 {
+                let detail = frame.contacts
+                    .map { "id=\($0.id) (\($0.x),\($0.y))" }
+                    .joined(separator: " ")
+                log("👆 Frame \(framesEmitted): \(frame.contacts.count) điểm chạm \(detail)")
+            }
             onFrame?(frame)
         }
     }

@@ -6,8 +6,14 @@ import Foundation
 public enum Usage {
     public enum Page {
         public static let genericDesktop = 0x01
+        public static let button = 0x09
         public static let digitizer = 0x0D
     }
+
+    /// Button 1. A panel still in its mouse-compatibility mode reports no tip switch,
+    /// no contact id and no contact count — this button is the only "finger is down"
+    /// signal it sends.
+    public static let primaryButton = 0x01
 
     public static let x = 0x30
     public static let y = 0x31
@@ -52,7 +58,8 @@ public struct TouchValueAssembler: Sendable {
 
         func hasValue(forPage page: Int, usage: Int) -> Bool {
             switch (page, usage) {
-            case (Usage.Page.digitizer, Usage.tipSwitch): return tip != nil
+            case (Usage.Page.digitizer, Usage.tipSwitch),
+                 (Usage.Page.button, Usage.primaryButton): return tip != nil
             case (Usage.Page.digitizer, Usage.confidence): return confident != nil
             case (Usage.Page.digitizer, Usage.contactIdentifier): return id != nil
             case (Usage.Page.digitizer, Usage.width): return width != nil
@@ -80,21 +87,25 @@ public struct TouchValueAssembler: Sendable {
         }
         frameTime = time
 
-        if usagePage == Usage.Page.digitizer && usage == Usage.contactCount {
-            // The count itself closes the report; its value is not needed, because only
-            // contacts the device actually sent are ever emitted.
+        // Contact count ends a digitizer report; button 1 ends a mouse-mode one. Without
+        // a closer the last report would sit unflushed until the next touch, so a lift
+        // would only be noticed when the user touched again.
+        let closesReport = (usagePage == Usage.Page.digitizer && usage == Usage.contactCount)
+            || (usagePage == Usage.Page.button && usage == Usage.primaryButton)
+
+        if isTracked(page: usagePage, usage: usage) {
+            if current.hasValue(forPage: usagePage, usage: usage) {
+                contacts.append(current)
+                current = Partial()
+            }
+            assign(page: usagePage, usage: usage, value: value)
+        }
+
+        if closesReport {
             let frame = flush(at: time)
             frameTime = nil
             return completed ?? frame
         }
-
-        guard isTracked(page: usagePage, usage: usage) else { return completed }
-
-        if current.hasValue(forPage: usagePage, usage: usage) {
-            contacts.append(current)
-            current = Partial()
-        }
-        assign(page: usagePage, usage: usage, value: value)
 
         return completed
     }
@@ -132,6 +143,7 @@ public struct TouchValueAssembler: Sendable {
     private func isTracked(page: Int, usage: Int) -> Bool {
         switch (page, usage) {
         case (Usage.Page.digitizer, Usage.tipSwitch),
+             (Usage.Page.button, Usage.primaryButton),
              (Usage.Page.digitizer, Usage.confidence),
              (Usage.Page.digitizer, Usage.contactIdentifier),
              (Usage.Page.digitizer, Usage.width),
@@ -146,7 +158,8 @@ public struct TouchValueAssembler: Sendable {
 
     private mutating func assign(page: Int, usage: Int, value: Int) {
         switch (page, usage) {
-        case (Usage.Page.digitizer, Usage.tipSwitch): current.tip = value != 0
+        case (Usage.Page.digitizer, Usage.tipSwitch),
+             (Usage.Page.button, Usage.primaryButton): current.tip = value != 0
         case (Usage.Page.digitizer, Usage.confidence): current.confident = value != 0
         case (Usage.Page.digitizer, Usage.contactIdentifier): current.id = UInt8(truncatingIfNeeded: value)
         case (Usage.Page.digitizer, Usage.width): current.width = value

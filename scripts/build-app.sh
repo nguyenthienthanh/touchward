@@ -60,8 +60,15 @@ cat > "${CONTENTS}/Info.plist" <<PLIST
 PLIST
 echo "</plist>" >> "${CONTENTS}/Info.plist"
 
-echo "▸ Ký (ad-hoc)…"
-codesign --force --deep --sign - \
+IDENTITY="${SIGNING_IDENTITY:-}"
+if [ -n "$IDENTITY" ] && security find-identity -v -p codesigning | grep -q "$IDENTITY"; then
+  echo "▸ Ký bằng \"$IDENTITY\"…"
+else
+  echo "▸ Ký ad-hoc (chưa có chứng chỉ — chạy scripts/make-signing-cert.sh để quyền không mất mỗi lần build)…"
+  IDENTITY="-"
+fi
+
+codesign --force --deep --sign "$IDENTITY" \
          --identifier "${BUNDLE_ID}" \
          --options runtime --timestamp=none "$APP" 2>&1 | sed 's/^/  /'
 

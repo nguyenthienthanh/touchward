@@ -15,6 +15,11 @@ final class TouchPipeline {
     /// Global-coordinate rect of the on-screen keyboard while it is visible.
     /// Touches inside it bypass gesture classification entirely.
     var directTouchRegion: (() -> CGRect?)?
+    /// Presses the key under a global point; returns true when a key was actually hit.
+    /// Injected rather than synthesized as a click so typing never moves the pointer.
+    var pressKey: ((CGPoint) -> Bool)?
+    /// The finger left the keyboard.
+    var releaseKey: (() -> Void)?
     private var directPress: CGPoint?
 
     private let profile: DeviceProfile
@@ -64,8 +69,26 @@ final class TouchPipeline {
         set { mapper.calibration = newValue }
     }
 
+    private var framesHandled = 0
+    private var pointerMoves = 0
+    private var hasSeenMultitouch = false
+    private var scrollsEmitted = 0
+
     func handle(_ raw: TouchFrame) {
         let frame = palmFilter.reject(raw)
+
+        framesHandled += 1
+        if framesHandled <= 12, let first = frame.contacts.first {
+            let mapped = mapper.globalPoint(x: first.x, y: first.y)
+            log("   → map (\(first.x),\(first.y)) ⇒ (\(Int(mapped.x)),\(Int(mapped.y)))")
+        }
+
+        // Whether the panel reports a second finger at all decides whether scrolling can
+        // work; say so once rather than leaving the user to guess why nothing scrolls.
+        if frame.contacts.count >= 2, !hasSeenMultitouch {
+            hasSeenMultitouch = true
+            log("✅ Panel báo \(frame.contacts.count) điểm chạm — cuộn hai ngón dùng được.")
+        }
 
         // A live touch means the user is not on the mouse — drop any queued cursor return.
         if !frame.contacts.isEmpty {
@@ -97,8 +120,10 @@ final class TouchPipeline {
                   let contact = frame.contacts.first,
                   region.contains(contact.point) else { return false }
 
-            synthesizer.pressLeft(at: contact.point)
+            _ = pressKey?(contact.point)
             directPress = contact.point
+            // Consumed either way: a finger inside the keyboard that landed between keys
+            // must not fall through and click whatever sits behind the panel.
             return true
         }
 
@@ -112,15 +137,19 @@ final class TouchPipeline {
     }
 
     private func releaseDirectPress() {
-        guard let point = directPress else { return }
-        synthesizer.releaseLeft(at: point)
+        guard directPress != nil else { return }
+        releaseKey?()
         directPress = nil
+        // The keyboard swallows these frames, so the recognizer never reaches
+        // `sessionEnded` and nothing else would ever arm the return. Without this, one tap
+        // on a key stranded the cursor on the touchscreen for the rest of the session.
+        cursorReturn.scheduleReturn(to: mainCentre)
     }
 
     /// Closes out anything in flight. Called on quit, on unplug, and on sleep, so a pointer
     /// button is never left logically pressed for the rest of the login session.
     func releaseEverything() {
-        // The key press is a held left button too — it must be let go on quit and unplug.
+        // A key may still be under a finger; let it go on quit and on unplug.
         releaseDirectPress()
         emit(recognizer.forceRelease())
     }
@@ -133,6 +162,13 @@ final class TouchPipeline {
 
     private func emit(_ events: [GestureEvent]) {
         for event in events {
+            if case .scroll(let dx, let dy, let at) = event {
+                scrollsEmitted += 1
+                if scrollsEmitted <= 6 {
+                    log("   ↕︎ scroll \(Int(dx)),\(Int(dy)) tại (\(Int(at.x)),\(Int(at.y)))")
+                }
+            }
+
             if case .sessionEnded = event {
                 cursorReturn.scheduleReturn(to: mainCentre)
             } else {
