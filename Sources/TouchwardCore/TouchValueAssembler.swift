@@ -58,8 +58,7 @@ public struct TouchValueAssembler: Sendable {
 
         func hasValue(forPage page: Int, usage: Int) -> Bool {
             switch (page, usage) {
-            case (Usage.Page.digitizer, Usage.tipSwitch),
-                 (Usage.Page.button, Usage.primaryButton): return tip != nil
+            case (Usage.Page.digitizer, Usage.tipSwitch): return tip != nil
             case (Usage.Page.digitizer, Usage.confidence): return confident != nil
             case (Usage.Page.digitizer, Usage.contactIdentifier): return id != nil
             case (Usage.Page.digitizer, Usage.width): return width != nil
@@ -74,6 +73,28 @@ public struct TouchValueAssembler: Sendable {
     private var contacts: [Partial] = []
     private var current = Partial()
     private var frameTime: TimeInterval?
+    /// True once this report carried anything at all, so a report that only says "the
+    /// button went up" still produces the empty frame that ends the touch session.
+    private var hasPendingValues = false
+
+    // MARK: mouse-compatibility mode
+    //
+    // A panel still in mouse mode reports no tip switch, no contact id and no contact
+    // count — button 1 is the only "finger is down" signal it sends. And IOKit calls back
+    // only for element values that *changed*, so a finger sliding across the glass sends
+    // X alone, or Y alone, and never repeats the button that is still held.
+    //
+    // Assembling those reports independently is what made a moving finger look like a
+    // lifted one: every move produced a frame with zero contacts. The button and the last
+    // position are therefore held as state and carried across reports.
+    private var mouseX: Int?
+    private var mouseY: Int?
+    private var mouseButtonDown = false
+    private var sawMouseButton = false
+    /// Once the panel speaks real digitizer, its reports are authoritative and the
+    /// mouse-compat track is switched off — a device that sends both must not have its
+    /// fingers doubled by the fallback.
+    private var sawDigitizerFinger = false
 
     public init() {}
 
@@ -93,12 +114,18 @@ public struct TouchValueAssembler: Sendable {
         let closesReport = (usagePage == Usage.Page.digitizer && usage == Usage.contactCount)
             || (usagePage == Usage.Page.button && usage == Usage.primaryButton)
 
-        if isTracked(page: usagePage, usage: usage) {
+        if usagePage == Usage.Page.button && usage == Usage.primaryButton {
+            // A level, not an edge: it stays true until the device says otherwise.
+            sawMouseButton = true
+            mouseButtonDown = value != 0
+            hasPendingValues = true
+        } else if isTracked(page: usagePage, usage: usage) {
             if current.hasValue(forPage: usagePage, usage: usage) {
                 contacts.append(current)
                 current = Partial()
             }
             assign(page: usagePage, usage: usage, value: value)
+            hasPendingValues = true
         }
 
         if closesReport {
@@ -122,9 +149,14 @@ public struct TouchValueAssembler: Sendable {
             contacts.append(current)
             current = Partial()
         }
-        guard !contacts.isEmpty else { return nil }
+        let partials = contacts
+        contacts.removeAll()
 
-        let finished = contacts.compactMap { partial -> Contact? in
+        let pending = hasPendingValues
+        hasPendingValues = false
+        guard pending else { return nil }
+
+        let finished = partials.compactMap { partial -> Contact? in
             // A contact only counts while its tip switch is set. Confidence is optional:
             // some controllers only ever report it for palm rejection and others never
             // set it at all, so its absence must not mean "reject everything".
@@ -136,14 +168,38 @@ public struct TouchValueAssembler: Sendable {
                            isTouching: true, isConfident: true)
         }
 
-        contacts.removeAll()
-        return TouchFrame(contacts: finished, time: time)
+        if !finished.isEmpty {
+            sawDigitizerFinger = true
+            return TouchFrame(contacts: finished, time: time)
+        }
+        // A report whose tip switch says "up" is a real digitizer report: it ends the
+        // touch, and must not be second-guessed by the mouse-compat fallback below.
+        if sawDigitizerFinger || partials.contains(where: { $0.tip != nil }) {
+            return TouchFrame(contacts: finished, time: time)
+        }
+
+        return mouseModeFrame(from: partials, at: time)
+    }
+
+    /// Rebuilds the single contact a mouse-mode panel implies, from state held across
+    /// reports. Only the axes that actually moved arrive, so the others are carried over.
+    private mutating func mouseModeFrame(from partials: [Partial], at time: TimeInterval) -> TouchFrame? {
+        guard sawMouseButton else { return TouchFrame(contacts: [], time: time) }
+
+        for partial in partials {
+            if let x = partial.x { mouseX = x }
+            if let y = partial.y { mouseY = y }
+        }
+
+        guard mouseButtonDown, let x = mouseX, let y = mouseY else {
+            return TouchFrame(contacts: [], time: time)
+        }
+        return TouchFrame(contacts: [Contact(id: 0, x: x, y: y, isTouching: true)], time: time)
     }
 
     private func isTracked(page: Int, usage: Int) -> Bool {
         switch (page, usage) {
         case (Usage.Page.digitizer, Usage.tipSwitch),
-             (Usage.Page.button, Usage.primaryButton),
              (Usage.Page.digitizer, Usage.confidence),
              (Usage.Page.digitizer, Usage.contactIdentifier),
              (Usage.Page.digitizer, Usage.width),
@@ -158,8 +214,7 @@ public struct TouchValueAssembler: Sendable {
 
     private mutating func assign(page: Int, usage: Int, value: Int) {
         switch (page, usage) {
-        case (Usage.Page.digitizer, Usage.tipSwitch),
-             (Usage.Page.button, Usage.primaryButton): current.tip = value != 0
+        case (Usage.Page.digitizer, Usage.tipSwitch): current.tip = value != 0
         case (Usage.Page.digitizer, Usage.confidence): current.confident = value != 0
         case (Usage.Page.digitizer, Usage.contactIdentifier): current.id = UInt8(truncatingIfNeeded: value)
         case (Usage.Page.digitizer, Usage.width): current.width = value

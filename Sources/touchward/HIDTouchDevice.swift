@@ -34,6 +34,7 @@ final class HIDTouchDevice {
     private(set) var isSeized = false
     private(set) var seizedInterfaces = 0
     private var valuesSeen = 0
+    private var digitizerValuesSeen = 0
     private var framesEmitted = 0
     private(set) var inputModeSet = false
     private(set) var profile: DeviceProfile?
@@ -81,6 +82,12 @@ final class HIDTouchDevice {
         // The manager needs its own run-loop scheduling: per-device scheduling below only
         // delivers input, never the removal callback.
         IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+
+        // If a panel splits its collections across several interfaces, the one carrying
+        // Input Mode may not be the one we opened — worth knowing before blaming the write.
+        if found.count > 1 {
+            log("ℹ️  Có \(found.count) thiết bị khai báo Digitizer/Touch Screen; đang dùng cái đầu tiên.")
+        }
 
         guard let profile = attach(device) else { return .failure(.unreadableDescriptor) }
         self.profile = profile
@@ -180,6 +187,15 @@ final class HIDTouchDevice {
                        valuesSeen, page, usage, IOHIDValueGetIntegerValue(value)))
         }
 
+        // The mouse-mode trace above fills its 40 lines with X and Y and never shows
+        // whether real digitizer reports ever start. Trace those separately, so a panel
+        // that switches mode mid-session leaves evidence instead of a silence.
+        if page == Usage.Page.digitizer, digitizerValuesSeen < 20 {
+            digitizerValuesSeen += 1
+            log(String(format: "   ⌁[%02d] digitizer usage=0x%02X value=%d",
+                       digitizerValuesSeen, usage, IOHIDValueGetIntegerValue(value)))
+        }
+
         let integer = IOHIDValueGetIntegerValue(value)
 
         // The value's own timestamp, not the wall clock: all values from one report share
@@ -201,22 +217,102 @@ final class HIDTouchDevice {
 
     /// Windows writes Input Mode to move the controller out of its mouse-compatibility
     /// mode; macOS never does, which is why an untouched panel behaves like a button-only
-    /// pointing device. The report ID comes from the descriptor, not a constant.
+    /// pointing device.
+    ///
+    /// The previous version trusted `IOHIDDeviceSetReport`'s return code. That code says
+    /// the write left the host, not that the controller changed mode — the log claimed
+    /// multitouch was on while the panel went on sending mouse reports. Every route here
+    /// is therefore verified by reading Input Mode back, and what the device actually
+    /// answers is logged.
     private func switchToMultitouch(_ device: IOHIDDevice, reportID: UInt8?) {
-        guard let reportID else { return }
+        guard let element = inputModeElement(device) else {
+            log("ℹ️  Panel không có Input Mode trong descriptor — không thể yêu cầu multitouch.")
+            return
+        }
 
-        // 2 is "multi-touch" in the Windows digitizer spec; 3 is the precision-device value
-        // some controllers use instead. macOS is inconsistent about whether SetReport wants
-        // the ID prefixed, so both framings are tried.
-        for mode in [UInt8(0x02), UInt8(0x03)] {
-            for var payload in [[mode, 0x00], [reportID, mode, 0x00]] {
-                if IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature,
-                                        CFIndex(reportID), &payload, payload.count) == kIOReturnSuccess {
-                    inputModeSet = true
-                    return
-                }
+        let before = readInputMode(device, element: element)
+        log("   Input Mode hiện tại: \(before.map(String.init) ?? "không đọc được")")
+        if before == 2 {
+            inputModeSet = true
+            return
+        }
+
+        // Route 1: let IOKit build the feature report from the descriptor. It knows the
+        // report's length and where the field sits inside it; a hand-built buffer only
+        // guesses at both.
+        if let value = IOHIDValueCreateWithIntegerValue(kCFAllocatorDefault, element, 0, 2) as IOHIDValue?,
+           IOHIDDeviceSetValue(device, element, value) == kIOReturnSuccess,
+           readInputMode(device, element: element) == 2 {
+            inputModeSet = true
+            log("✅ Đã bật multitouch qua element Input Mode.")
+            return
+        }
+
+        // Route 2: read the feature report, change only the mode byte, write it back —
+        // what hid-multitouch on Linux does. Preserving the rest matters: the report also
+        // carries a device index that some controllers reject when zeroed.
+        guard let reportID else { return }
+        if setInputModeByReport(device, reportID: reportID),
+           readInputMode(device, element: element) == 2 {
+            inputModeSet = true
+            log("✅ Đã bật multitouch qua feature report \(reportID).")
+            return
+        }
+
+        log("""
+            ⚠️  Panel từ chối chuyển sang multitouch (Input Mode vẫn là \
+            \(readInputMode(device, element: element).map(String.init) ?? "?")).
+                Chỉ có 1 điểm chạm, nên cuộn hai ngón không thể hoạt động.
+            """)
+    }
+
+    private func inputModeElement(_ device: IOHIDDevice) -> IOHIDElement? {
+        let matching = [
+            kIOHIDElementUsagePageKey: Usage.Page.digitizer,
+            kIOHIDElementUsageKey: Usage.inputMode,
+        ] as CFDictionary
+        guard let elements = IOHIDDeviceCopyMatchingElements(device, matching, 0) as? [IOHIDElement] else {
+            return nil
+        }
+        return elements.first { IOHIDElementGetType($0) == kIOHIDElementTypeFeature }
+    }
+
+    /// Reading a feature element issues a GetReport, so this is the device's own answer
+    /// rather than a cached copy of what we asked for.
+    private func readInputMode(_ device: IOHIDDevice, element: IOHIDElement) -> Int? {
+        // The C call writes into a non-optional out-parameter, so it needs something to
+        // overwrite; this placeholder is never read.
+        let placeholder = IOHIDValueCreateWithIntegerValue(kCFAllocatorDefault, element, 0, 0)
+        var value = Unmanaged.passUnretained(placeholder)
+        guard IOHIDDeviceGetValue(device, element, &value) == kIOReturnSuccess else { return nil }
+        return IOHIDValueGetIntegerValue(value.takeUnretainedValue())
+    }
+
+    private func setInputModeByReport(_ device: IOHIDDevice, reportID: UInt8) -> Bool {
+        var buffer = [UInt8](repeating: 0, count: 8)
+        var length = CFIndex(buffer.count)
+
+        // Start from what the device has, so only the mode changes. If it will not answer,
+        // fall back to the shortest report the spec allows: mode plus device index.
+        if IOHIDDeviceGetReport(device, kIOHIDReportTypeFeature, CFIndex(reportID),
+                                &buffer, &length) == kIOReturnSuccess, length > 0 {
+            buffer = Array(buffer.prefix(Int(length)))
+            log("   Feature report \(reportID) đọc về: \(buffer.map { String(format: "%02X", $0) }.joined(separator: " "))")
+        } else {
+            buffer = [0, 0]
+        }
+
+        // The mode is the report's first field. When the ID was included in the buffer the
+        // device returned, it sits one byte further in.
+        for modeIndex in buffer.first == reportID ? [1, 0] : [0, 1] where buffer.indices.contains(modeIndex) {
+            var payload = buffer
+            payload[modeIndex] = 2
+            if IOHIDDeviceSetReport(device, kIOHIDReportTypeFeature, CFIndex(reportID),
+                                    &payload, payload.count) == kIOReturnSuccess {
+                return true
             }
         }
+        return false
     }
 
     private func handleRemoval() {

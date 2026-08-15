@@ -7,10 +7,14 @@ import ApplicationServices
 /// Observers are per-process: registering against the system-wide element fails with
 /// kAXErrorInvalidUIElement, so we tear down and rebuild the observer on every app switch.
 final class FocusWatcher {
-    struct Focus {
+    struct Focus: Equatable {
         var isTextInput: Bool
         var isSecureField: Bool
     }
+
+    /// The last state handed to the caller. Focus is polled as well as observed, and
+    /// re-presenting the keyboard twice a second would fight the user's own window order.
+    private var lastReported: Focus?
 
     private var observer: AXObserver?
     private var observedApp: AXUIElement?
@@ -60,13 +64,25 @@ final class FocusWatcher {
         guard AXObserverCreate(pid, callback, &newObserver) == .success, let created = newObserver else {
             // Failing silently would strand a visible keyboard over an app that cannot
             // report focus at all.
-            onChange?(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false))
             return
         }
 
         let context = Unmanaged.passUnretained(self).toOpaque()
-        AXObserverAddNotification(created, app, kAXFocusedUIElementChangedNotification as CFString, context)
-        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .defaultMode)
+        // Focus can leave a text field without the focused *element* changing — the window
+        // changes, or the app quietly drops focus altogether. Watching only the element
+        // notification is why the keyboard sometimes stayed up over a non-text view.
+        for notification in [
+            kAXFocusedUIElementChangedNotification,
+            kAXFocusedWindowChangedNotification,
+            kAXWindowMiniaturizedNotification,
+            kAXUIElementDestroyedNotification,
+        ] {
+            AXObserverAddNotification(created, app, notification as CFString, context)
+        }
+        // Common modes: in default mode these notifications stall while a control in our
+        // own keyboard panel is tracking, which is exactly when focus tends to move.
+        CFRunLoopAddSource(CFRunLoopGetMain(), AXObserverGetRunLoopSource(created), .commonModes)
 
         observer = created
         observedApp = app
@@ -75,9 +91,16 @@ final class FocusWatcher {
         reportCurrentFocus()
     }
 
+    /// Re-reads focus on demand. Not every app emits an AX notification when focus leaves
+    /// a text field — some emit nothing at all — so the keyboard polls this while it is on
+    /// screen rather than trusting that a notification will arrive.
+    func refresh() {
+        reportCurrentFocus()
+    }
+
     private func reportCurrentFocus() {
         guard let app = observedApp else {
-            onChange?(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false))
             return
         }
 
@@ -85,14 +108,14 @@ final class FocusWatcher {
         guard AXUIElementCopyAttributeValue(app, kAXFocusedUIElementAttribute as CFString, &focused) == .success,
               let element = focused
         else {
-            onChange?(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false))
             return
         }
 
         // A misbehaving app can return something other than an element here. A force cast
         // would trap and take the touch driver down with it.
         guard CFGetTypeID(element) == AXUIElementGetTypeID() else {
-            onChange?(Focus(isTextInput: false, isSecureField: false))
+            report(Focus(isTextInput: false, isSecureField: false))
             return
         }
         let target = element as! AXUIElement
@@ -106,7 +129,13 @@ final class FocusWatcher {
         ]
         let isSecure = subrole == (kAXSecureTextFieldSubrole as String)
 
-        onChange?(Focus(isTextInput: role.map(textRoles.contains) ?? false, isSecureField: isSecure))
+        report(Focus(isTextInput: role.map(textRoles.contains) ?? false, isSecureField: isSecure))
+    }
+
+    private func report(_ focus: Focus) {
+        guard focus != lastReported else { return }
+        lastReported = focus
+        onChange?(focus)
     }
 
     private func stringAttribute(_ element: AXUIElement, _ attribute: String) -> String? {
