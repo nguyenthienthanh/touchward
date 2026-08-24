@@ -244,8 +244,17 @@ final class AppController: NSObject, NSApplicationDelegate {
         // Unplugging mid-drag would otherwise leave the left button logically pressed.
         device.onDisconnect = { [weak self] in
             DispatchQueue.main.async {
-                log("🔌 Touchscreen unplugged. Releasing anything held down.")
+                log("🔌 Touchscreen went away. Releasing anything held down.")
                 self?.deactivate()
+            }
+        }
+
+        // Switching the panel on gives back a brand-new USB device. That arrival is the
+        // reliable signal; a display reconfiguration may or may not accompany it.
+        device.onReconnect = { [weak self] in
+            DispatchQueue.main.async {
+                log("🔌 Touchscreen is back.")
+                self?.activateIfPossible()
             }
         }
 
@@ -344,10 +353,16 @@ final class AppController: NSObject, NSApplicationDelegate {
     private func deactivate() {
         pipeline?.stop()
         pipeline = nil
-        device.stop()
+        // Release the panel but keep the HID manager listening. A full stop() would close
+        // the manager, and the manager is the only thing that can report the panel coming
+        // back — closing it is what turned "screen off" into "app gone for good".
+        device.releaseDevices()
         panel?.dismiss()
         isTouchDisplayActive = false
         touchDisplayID = nil
+        hasReportedNoDevice = false
+        hasReportedNoDisplay = false
+        log("⏸  Paused. Waiting for the touchscreen to come back.")
     }
 
     private var hasReportedNoDisplay = false

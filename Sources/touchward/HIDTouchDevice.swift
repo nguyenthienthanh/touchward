@@ -41,12 +41,19 @@ final class HIDTouchDevice {
 
     /// Called when the panel is unplugged, so the caller can release anything held.
     var onDisconnect: (() -> Void)?
+    /// Called when a matching panel appears while nothing is attached.
+    var onReconnect: (() -> Void)?
 
     func start(onFrame: @escaping (TouchFrame) -> Void) -> Result<DeviceProfile, StartError> {
         self.onFrame = onFrame
 
-        let manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
-        self.manager = manager
+        // Reuse the existing manager across a pause: tearing it down is what made a
+        // resume impossible, because the callbacks that report the panel coming back live
+        // on it.
+        if manager == nil {
+            manager = IOHIDManagerCreate(kCFAllocatorDefault, IOOptionBits(kIOHIDOptionsTypeNone))
+        }
+        guard let manager else { return .failure(.deviceNotFound) }
 
         // Declared usage, not VID/PID: this is what lets the driver work on a panel it has
         // never seen before.
@@ -54,6 +61,34 @@ final class HIDTouchDevice {
             kIOHIDDeviceUsagePageKey: Usage.Page.digitizer,
             kIOHIDDeviceUsageKey: Usage.touchScreen,
         ] as CFDictionary)
+
+        let context = Unmanaged.passUnretained(self).toOpaque()
+
+        IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, _ in
+            guard let context else { return }
+            Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue().handleRemoval()
+        }, context)
+
+        // Switching the panel off usually takes the USB device with it, and switching it
+        // back on brings a *new* one. Without this the app could only notice a return if a
+        // display reconfiguration happened to fire, which is not guaranteed.
+        IOHIDManagerRegisterDeviceMatchingCallback(manager, { context, _, _, _ in
+            guard let context else { return }
+            Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue().handleMatched()
+        }, context)
+
+        // The manager needs its own run-loop scheduling: per-device scheduling only
+        // delivers input, never the arrival and removal callbacks.
+        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+
+        return attachAvailableDevice()
+    }
+
+    /// Opens whichever matching panel is present right now. Used both on first start and
+    /// on every resume, so the two paths cannot drift apart.
+    func attachAvailableDevice() -> Result<DeviceProfile, StartError> {
+        guard let manager else { return .failure(.deviceNotFound) }
+        guard devices.isEmpty else { return profile.map { .success($0) } ?? .failure(.deviceNotFound) }
 
         // Enumerate WITHOUT opening the manager.
         //
@@ -65,23 +100,8 @@ final class HIDTouchDevice {
         // enumerate; the one and only open is the seize below.
         guard let found = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
               let device = found.first else {
-            let opened = IOHIDManagerOpen(manager, IOOptionBits(kIOHIDOptionsTypeSeizeDevice))
-            guard opened == kIOReturnSuccess else { return .failure(.managerOpenFailed(opened)) }
-            guard let retry = IOHIDManagerCopyDevices(manager) as? Set<IOHIDDevice>,
-                  let device = retry.first else { return .failure(.deviceNotFound) }
-            guard let profile = attach(device) else { return .failure(.unreadableDescriptor) }
-            self.profile = profile
-            return .success(profile)
+            return .failure(.deviceNotFound)
         }
-
-        IOHIDManagerRegisterDeviceRemovalCallback(manager, { context, _, _, _ in
-            guard let context else { return }
-            Unmanaged<HIDTouchDevice>.fromOpaque(context).takeUnretainedValue().handleRemoval()
-        }, Unmanaged.passUnretained(self).toOpaque())
-
-        // The manager needs its own run-loop scheduling: per-device scheduling below only
-        // delivers input, never the removal callback.
-        IOHIDManagerScheduleWithRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
 
         // If a panel splits its collections across several interfaces, the one carrying
         // Input Mode may not be the one we opened — worth knowing before blaming the write.
@@ -419,13 +439,47 @@ final class HIDTouchDevice {
         return false
     }
 
+    /// The panel went away — switched off, unplugged, or asleep.
+    ///
+    /// This runs *inside* IOKit's removal callback, so nothing here may tear down the
+    /// manager that is currently calling us: unregistering the callback on the stack and
+    /// closing the manager from within it is re-entrant teardown, and it took the whole
+    /// app down with it. Hop off the callback first, and only ever release the devices —
+    /// the manager stays alive so it can tell us when the panel returns.
     private func handleRemoval() {
-        onDisconnect?()
-        stop()
+        DispatchQueue.main.async { [weak self] in
+            guard let self, !self.devices.isEmpty else { return }
+            self.releaseDevices()
+            self.onDisconnect?()
+        }
+    }
+
+    /// A matching panel appeared. Fires on first enumeration too, which is harmless: the
+    /// caller only acts when nothing is running yet.
+    private func handleMatched() {
+        DispatchQueue.main.async { [weak self] in
+            guard let self, self.devices.isEmpty else { return }
+            self.onReconnect?()
+        }
     }
 
     /// Unschedules, closes and frees everything. Safe to call twice.
+    /// Full teardown, for quitting. Everything released *and* the manager closed, so no
+    /// callback can fire into a dead object.
     func stop() {
+        releaseDevices()
+
+        if let manager {
+            IOHIDManagerRegisterDeviceRemovalCallback(manager, nil, nil)
+            IOHIDManagerRegisterDeviceMatchingCallback(manager, nil, nil)
+            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
+            IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
+        }
+        manager = nil
+    }
+
+    /// Pause: let go of the panel but keep listening for it to come back.
+    func releaseDevices() {
         slotFlush?.invalidate()
         slotFlush = nil
         pendingSlotTime = nil
@@ -442,13 +496,9 @@ final class HIDTouchDevice {
         }
         devices.removeAll()
         openOptionsByDevice.removeAll()
-
-        if let manager {
-            IOHIDManagerRegisterDeviceRemovalCallback(manager, nil, nil)
-            IOHIDManagerUnscheduleFromRunLoop(manager, CFRunLoopGetMain(), CFRunLoopMode.commonModes.rawValue)
-            IOHIDManagerClose(manager, IOOptionBits(kIOHIDOptionsTypeNone))
-        }
-        manager = nil
+        profile = nil
+        isSeized = false
+        inputModeSet = false
     }
 
     enum StartError: Error, CustomStringConvertible {
