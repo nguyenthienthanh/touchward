@@ -439,6 +439,10 @@ Things that cannot be automated because they depend on hardware and TCC:
 
 ---
 
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md).
+
 ## Documents
 
 - [`docs/plan.vi.html`](docs/plan.vi.html) — the original design note, in Vietnamese,

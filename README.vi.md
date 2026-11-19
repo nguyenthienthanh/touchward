@@ -429,6 +429,10 @@ Những thứ không tự động hoá được vì phụ thuộc phần cứng 
 
 ---
 
+## Đóng góp
+
+Xem [CONTRIBUTING.md](CONTRIBUTING.md) (tiếng Anh).
+
 ## Tài liệu
 
 - [`docs/plan.vi.html`](docs/plan.vi.html) — bản thiết kế ban đầu, tiếng Việt, viết trước
